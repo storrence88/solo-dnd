@@ -101,3 +101,30 @@ button.end { border-color: var(--gold); }
 .toggle { display: flex; flex-direction: row; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 0.85rem; }
 .toggle input { width: auto; }
 h2.enemies { margin-top: 16px; }
+
+/* ---- Memory, camp and chapters ---- */
+.feeling { margin: -4px 0 8px; font-size: 0.85rem; color: var(--text); font-style: italic; }
+.journal { margin: -4px 0 10px; font-size: 0.8rem; color: #9c8fb5; }
+.journal summary { cursor: pointer; }
+.journal ul { margin: 6px 0; padding-left: 18px; }
+.journal .beliefs li { color: var(--text); }
+.entry.approval { padding: 2px 14px; font-size: 0.85rem; letter-spacing: 0.02em; }
+.entry.approval.up { color: var(--green); }
+.entry.approval.down { color: #e07a70; }
+.entry.approval small { color: var(--muted); font-size: 0.85rem; }
+.entry.banner.camp { color: #e7a35a; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 8px; }
+.entry.companion.banter { background: #201b1a; }
+.entry.companion.private, .entry.player.private { border-style: dashed; }
+.entry.companion .who small { color: var(--muted); font-weight: normal; }
+h2.chapter-title { text-align: center; font-size: 1.3rem; margin: 6px 0 2px; }
+.entry.departure { border: 1px solid var(--red); background: #2a1a1c; font-family: Georgia, serif; }
+.entry.departure.betrayed { box-shadow: 0 0 0 1px var(--red), 0 0 24px #c4483e33; }
+.entry.departure p { margin: 8px 0 0; font-style: italic; }
+.past-chapter { background: #19171e; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.past-chapter summary { cursor: pointer; display: grid; gap: 4px; }
+.past-chapter summary strong { color: var(--gold); font-family: Georgia, serif; }
+.past-chapter summary span { color: var(--muted); font-size: 0.9rem; }
+.past-chapter .transcript { margin-top: 10px; opacity: 0.85; }
+.camp-box { grid-template-columns: 1fr auto; }
+.camp-box .talk-to { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.9rem; }
+.camp-box .talk-to button.chosen { border-color: var(--gold); color: var(--gold); }

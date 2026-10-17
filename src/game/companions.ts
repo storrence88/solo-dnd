@@ -15,6 +15,10 @@ export interface CompanionDef {
   /** Words that make a moment matter to them and push them toward the spotlight. */
   interests: string[];
   startMood: string;
+  /** What leaving the party looks like for them, once trust is truly gone. */
+  departure: string;
+  /** What betraying the party would look like, if they ever would. Without one they can only leave. */
+  betrayal?: string;
   /** Starting trust (0-10) toward other party members, by character id. */
   startTrust: Record<string, number>;
 }
@@ -30,6 +34,7 @@ VOICE: warm, dry, blunt when tired. Swears by the Lantern. Short sentences under
   combatStyle: 'Keeps the party standing first: heals anyone who is down or badly hurt, otherwise hits hard with Guiding Bolt or her mace. Will not strike a foe who has surrendered.',
   interests: ['sick', 'fever', 'child', 'daughter', 'wound', 'hurt', 'heal', 'medicine', 'pray', 'god', 'lantern', 'mercy', 'surrender', 'lira'],
   startMood: 'focused, worried about the fever',
+  departure: 'Leave before dawn with her healer\'s kit to tend the sick on her own, leaving a blunt note.',
   startTrust: { steven: 6, quill: 4 },
 };
 
@@ -46,6 +51,8 @@ VOICE: quick, funny, deflects with jokes. Calls Steven "Big Man". Gets very quie
   combatStyle: 'Fights from the edges: picks off wounded or distracted foes for Sneak Attack, hides between shots, and gets out of reach when hurt.',
   interests: ['lock', 'steal', 'coin', 'gold', 'money', 'lie', 'trick', 'thief', 'sneak', 'hide', 'corrin', 'prison', 'guard', 'bribe', 'deal'],
   startMood: 'jumpy; hates this bridge',
+  departure: 'Slip away in the night without a word, leaving only a scrawled note.',
+  betrayal: 'Slip away in the night with two crates of the medicine to sell in the river cities, leaving a note that half-apologises.',
   startTrust: { steven: 6, brenna: 7 },
 };
 

@@ -12,6 +12,7 @@ import {
   type Combatant,
   type LegalAction,
 } from '../engine';
+import { CAMPAIGNS, nextScene } from './campaign';
 import { companionDef, type CompanionDef } from './companions';
 import { nudgeTrust, parseCombatTurn, parsePoll, parseTurn } from './companionReply';
 import { parseDmReply, type DmReply, type DmReplyRules } from './dmReply';
@@ -25,9 +26,10 @@ import {
 } from './prompts';
 import type { Scene } from './scene';
 import { chooseSpeakers, type Poll } from './spotlight';
-import type { CombatResult, CompanionState, Entry, GameState, MemberState } from './state';
+import { freshCompanionState, type CombatResult, type CompanionState, type Entry, type GameState, type MemberState } from './state';
 
-export function newGame(scene: Scene, id: string, seed: number): GameState {
+/** A new game starting at `scene`, the first scene of campaign `campaignId`. */
+export function newGame(scene: Scene, id: string, seed: number, campaignId = scene.id): GameState {
   const party: Record<string, MemberState> = {};
   const companions: Record<string, CompanionState> = {};
   for (const spec of [scene.pc, ...scene.companions.map((c) => companionDef(c).spec)]) {
@@ -36,15 +38,19 @@ export function newGame(scene: Scene, id: string, seed: number): GameState {
   }
   for (const cid of scene.companions) {
     const def = companionDef(cid);
-    companions[cid] = { mood: def.startMood, trust: { ...def.startTrust }, lastLed: -1 };
+    companions[cid] = freshCompanionState(def.startMood, def.startTrust);
   }
   return {
-    version: 2,
+    version: 3,
     id,
+    campaignId,
+    chapter: 0,
     sceneId: scene.id,
     seed,
     mode: 'explore',
     transcript: [{ kind: 'dm', text: scene.opening, prompt: 'What do you do?' }],
+    history: [],
+    roster: [...scene.companions],
     unlockedSecrets: [],
     removedEnemies: [],
     checksRolled: 0,
@@ -56,7 +62,7 @@ export function newGame(scene: Scene, id: string, seed: number): GameState {
 
 /** Every party member, player character first, with current HP, resources and spell slots applied. */
 export function partyMembers(state: GameState, scene: Scene, { includeDead = false } = {}): Combatant[] {
-  const specs = [scene.pc, ...scene.companions.map((c) => companionDef(c).spec)];
+  const specs = [scene.pc, ...state.roster.map((c) => companionDef(c).spec)];
   return specs
     .filter((spec) => includeDead || !state.party[spec.id]?.dead)
     .map((spec) => {
@@ -76,7 +82,8 @@ export function currentPc(state: GameState, scene: Scene): Combatant {
   return partyMembers(state, scene, { includeDead: true })[0]!;
 }
 
-const livingCompanions = (state: GameState, scene: Scene) => scene.companions.filter((id) => !state.party[id]?.dead);
+/** Companions still with the party and alive. */
+export const livingCompanions = (state: GameState) => state.roster.filter((id) => !state.party[id]?.dead);
 
 /**
  * One exploration beat. The player acts first; the gatekeeper unlocks any secrets whose trigger was
@@ -103,37 +110,38 @@ export async function playerActs(
 }
 
 async function companionsReact(state: GameState, scene: Scene, model: ModelClient, playerText: string, handOff: boolean): Promise<void> {
-  const ids = livingCompanions(state, scene);
+  const ids = livingCompanions(state);
   if (ids.length === 0) return;
   const party = partyMembers(state, scene);
   const me = (id: string) => party.find((c) => c.id === id)!;
 
-  const polls: Poll[] = await Promise.all(
+  const replies = await Promise.all(
     ids.map(async (id) => {
-      const def = companionDef(id);
-      let reply = { intent: 'support' as const as Poll['intent'], urgency: 2 };
       try {
-        reply = parsePoll(await model.complete({ role: 'helper', messages: buildPollMessages(state, scene, def, me(id), party), json: true }));
+        return parsePoll(await model.complete({ role: 'helper', messages: buildPollMessages(state, scene, companionDef(id), me(id), party), json: true }));
       } catch (e) {
         if (isFatal(e)) throw e;
+        return parsePoll('');
       }
-      return { id, name: me(id).name, intent: reply.intent, urgency: reply.urgency, interests: def.interests, lastLed: state.companions[id]!.lastLed };
     }),
   );
+  // Everyone judges the PC's choice, whether or not they speak. Holding back is not a choice to judge.
+  if (!handOff) ids.forEach((id, i) => recordApproval(state, scene, id, replies[i]!.approve, replies[i]!.because));
+  const polls: Poll[] = ids.map((id, i) => ({
+    id, name: me(id).name, intent: replies[i]!.intent, urgency: replies[i]!.urgency, interests: companionDef(id).interests, lastLed: state.companions[id]!.lastLed,
+  }));
   const lastDm = [...state.transcript].reverse().find((e) => e.kind === 'dm');
   const speakers = chooseSpeakers({ polls, playerText, recentText: lastDm?.kind === 'dm' ? lastDm.text : '', beat: state.beat, handOff });
 
   let leadName: string | undefined;
   for (const { id, role } of speakers) {
     const def = companionDef(id);
-    const others = party.filter((c) => c.id !== id).map((c) => c.id);
     const messages = buildCompanionTurnMessages(state, scene, def, me(id), party, role, role === 'support' ? leadName : undefined);
-    const turn = await askWithRetry(model, 'companion', messages, (t) => parseTurn(t, others));
+    const turn = await askWithRetry(model, 'companion', messages, (t) => parseTurn(t));
     if (!turn) continue; // a companion who can't answer just stays quiet this beat
     state.transcript.push({ kind: 'companion', id, name: me(id).name, say: turn.say, act: turn.act, thought: turn.thought, role });
     const cs = state.companions[id]!;
     if (turn.mood) cs.mood = turn.mood;
-    for (const [other, value] of Object.entries(turn.trust)) cs.trust[other] = nudgeTrust(cs.trust[other] ?? 5, value);
     if (role === 'lead') {
       cs.lastLed = state.beat;
       leadName = me(id).name;
@@ -141,12 +149,25 @@ async function companionsReact(state: GameState, scene: Scene, model: ModelClien
   }
 }
 
+/**
+ * A companion's reaction to the PC's choice: trust in the PC moves one point and the reason is
+ * logged, since leaving or betraying the party later needs a chain of real causes.
+ */
+export function recordApproval(state: GameState, scene: Scene, id: string, delta: -1 | 0 | 1, why: string): void {
+  if (!delta) return;
+  const cs = state.companions[id]!;
+  const pcId = scene.pc.id;
+  cs.trust[pcId] = nudgeTrust(cs.trust[pcId] ?? 5, (cs.trust[pcId] ?? 5) + delta);
+  cs.approvals.push({ chapter: state.chapter, beat: state.beat, delta, why });
+  state.transcript.push({ kind: 'approval', id, name: companionDef(id).spec.name, delta, why });
+}
+
 /** Rate limits and bad keys stop the turn; anything else a companion gets wrong just costs them their line. */
-function isFatal(e: unknown): boolean {
+export function isFatal(e: unknown): boolean {
   return /rate limiting|\((401|403)\)/.test((e as Error).message);
 }
 
-async function askWithRetry<T>(model: ModelClient, role: 'companion', messages: ChatMessage[], parse: (text: string) => T): Promise<T | null> {
+export async function askWithRetry<T>(model: ModelClient, role: 'companion' | 'helper', messages: ChatMessage[], parse: (text: string) => T): Promise<T | null> {
   const msgs = [...messages];
   for (let attempt = 0; attempt < 2; attempt++) {
     let text: string;
@@ -191,7 +212,7 @@ async function applyDmReply(state: GameState, scene: Scene, model: ModelClient, 
   }
 }
 
-function dmEntry(reply: DmReply): Entry {
+export function dmEntry(reply: DmReply): Entry {
   return reply.hiddenFrom.length
     ? { kind: 'dm', text: reply.narration, prompt: reply.prompt, hiddenFrom: reply.hiddenFrom }
     : { kind: 'dm', text: reply.narration, prompt: reply.prompt };
@@ -213,7 +234,7 @@ async function unlockSecrets(state: GameState, scene: Scene, model: ModelClient)
 }
 
 /** Asks the DM, checks the reply against the rules, and gives the model one retry with the error if it breaks them. */
-async function askDm(
+export async function askDm(
   state: GameState,
   scene: Scene,
   model: ModelClient,
@@ -225,7 +246,7 @@ async function askDm(
     enemyIds: scene.enemies.map((e) => e.id).filter((id) => !state.removedEnemies.includes(id)),
     unlockedSecrets: state.unlockedSecrets,
     pcId: scene.pc.id,
-    companionIds: livingCompanions(state, scene),
+    companionIds: livingCompanions(state),
   };
   if (rules.enemyIds.length === 0) rules.allowCombat = false;
   const messages: ChatMessage[] = buildDmMessages(state, scene, partyMembers(state, scene, { includeDead: true }), instruction);
@@ -424,16 +445,29 @@ function endCombat(state: GameState, snap: CombatSnapshot): void {
 
 export interface PartyMemberView {
   character: Combatant;
-  companion?: { mood: string; trust: Record<string, number> };
+  companion?: { mood: string; trust: Record<string, number>; feeling: string; beliefs: string[]; memories: string[]; intention: string };
+}
+
+export interface ChapterView {
+  title: string;
+  outcome: string;
+  summary: string;
+  transcript: Entry[];
 }
 
 export interface GameView {
   id: string;
   title: string;
+  campaignTitle: string;
   mode: GameState['mode'];
+  /** Earlier scenes, oldest first. */
+  chapters: ChapterView[];
   transcript: Entry[];
   pcId: string;
   party: PartyMemberView[];
+  /** The title of the scene after this one, once this one is over. */
+  nextTitle?: string;
+  camp?: { approacher?: string; companions: string[] };
   combat?: {
     combatants: Combatant[];
     round: number;
@@ -446,14 +480,23 @@ export interface GameView {
 /** Everything the browser may show. DM secrets never leave the server. */
 export function viewGame(state: GameState, scene: Scene): GameView {
   const members = partyMembers(state, scene, { includeDead: true });
+  const inner = (id: string): PartyMemberView['companion'] => {
+    const cs = state.companions[id];
+    return cs && { mood: cs.mood, trust: cs.trust, feeling: cs.feeling, beliefs: cs.beliefs, memories: cs.memories.map((m) => m.text), intention: cs.intention };
+  };
   const view: GameView = {
     id: state.id,
     title: scene.title,
+    campaignTitle: CAMPAIGNS[state.campaignId]?.title ?? scene.title,
     mode: state.mode,
+    chapters: state.history.map((c) => ({ title: c.title, outcome: c.outcome, summary: c.summary, transcript: c.transcript })),
     transcript: state.transcript,
     pcId: scene.pc.id,
-    party: members.map((c) => ({ character: c, companion: state.companions[c.id] && { mood: state.companions[c.id]!.mood, trust: state.companions[c.id]!.trust } })),
+    party: members.map((c) => ({ character: c, companion: inner(c.id) })),
   };
+  const next = state.mode === 'over' || state.mode === 'camp' ? nextScene(state) : undefined;
+  if (next) view.nextTitle = next.title;
+  if (state.mode === 'camp') view.camp = { approacher: state.camp?.approacher, companions: livingCompanions(state) };
   if (state.mode === 'combat' && state.combat) {
     const { enc, waitingOn } = replayCombat(state, scene);
     const nameOf = (id: string) => enc.get(id).name;

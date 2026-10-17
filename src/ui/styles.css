@@ -1,12 +1,16 @@
 :root {
-  --bg: #15131a;
-  --panel: #1f1c26;
-  --line: #3a3445;
-  --text: #ece6da;
-  --muted: #a79f92;
-  --gold: #d4a64a;
+  --bg: #120d0a;
+  --panel: #221913;
+  --line: #4a3826;
+  --text: #efe4cc;
+  --muted: #b3a284;
+  --gold: #d9ac52;
   --red: #c4483e;
-  --green: #5fa36a;
+  --green: #6fae6a;
+  --parchment: #efe1c0;
+  --ink: #2b1d12;
+  --display: 'Cinzel', Georgia, serif;
+  --story: 'EB Garamond', Georgia, serif;
   color-scheme: dark;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
@@ -82,9 +86,6 @@ button:disabled { opacity: 0.4; cursor: default; }
 .actions { margin-top: 16px; }
 .buttons.wrap { flex-wrap: wrap; }
 button.end { border-color: var(--gold); }
-.reveal { animation: reveal 0.35s ease-out both; }
-@keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .reveal { animation-duration: 0.01s; } }
 
 /* ---- Companions ---- */
 .entry.companion { border-left: 3px solid var(--line); background: #1c1a22; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
@@ -161,3 +162,92 @@ h2.chapter-title { text-align: center; font-size: 1.3rem; margin: 6px 0 2px; }
 .attitude.hostile { color: #e07a70; }
 .attitude.wary { color: #e7a35a; }
 .attitude.friendly, .attitude.allied { color: var(--green); }
+
+/* ---- The table: parchment, ink and gold (Phase 6b) ---- */
+body {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% -10%, #3a2a1c 0%, transparent 60%),
+    radial-gradient(ellipse 80% 80% at 50% 120%, #2a1a10 0%, transparent 60%),
+    repeating-linear-gradient(97deg, #ffffff03 0 2px, transparent 2px 9px),
+    var(--bg);
+  background-attachment: fixed;
+}
+h1, h2, h3, .tabs a, button { font-family: var(--display); }
+h1 { letter-spacing: 0.03em; text-shadow: 0 2px 12px #d9ac5233; }
+h2 { letter-spacing: 0.04em; }
+button { letter-spacing: 0.03em; background: linear-gradient(#2c2018, #1d1510); border-color: #6b5233; }
+button:hover:not(:disabled) { border-color: var(--gold); box-shadow: 0 0 10px #d9ac5233; }
+button.chosen, .tones button.chosen { background: linear-gradient(#4a3518, #2c2010); }
+textarea, input, select { font-family: inherit; }
+.tabs a { font-size: 0.9rem; letter-spacing: 0.06em; }
+
+/* The DM's voice is written on parchment. */
+.entry.dm {
+  background: radial-gradient(ellipse at 30% 20%, #f6ebd0 0%, var(--parchment) 55%, #dcc89c 100%);
+  color: var(--ink);
+  border: 1px solid #b89a63;
+  border-radius: 3px;
+  box-shadow: inset 0 0 28px #a07c4544, 0 6px 18px #00000066;
+  font-family: var(--story);
+  font-size: 1.16rem;
+  line-height: 1.6;
+  padding: 16px 20px;
+}
+.entry.dm p:first-child::first-letter { font-family: var(--display); font-size: 2.1em; float: left; line-height: 0.9; margin: 4px 6px 0 0; color: #7a1d22; }
+.entry.dm .prompt { color: #7a1d22; }
+.entry.dm.streaming { box-shadow: inset 0 0 28px #a07c4544, 0 0 0 1px #d9ac5266, 0 6px 22px #d9ac5222; }
+.ink-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; vertical-align: -0.15em; background: #7a1d22; animation: blink 0.9s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.recap { background: radial-gradient(ellipse at 30% 20%, #f6ebd0, var(--parchment) 60%, #dcc89c); color: var(--ink); border-color: #b89a63; font-family: var(--story); font-size: 1.08rem; }
+.recap strong { color: #7a1d22; font-family: var(--display); }
+
+/* The party speaks in their own colours; you write in ink. */
+.entry.player { background: #1c2230; border-color: #3d4a66; font-family: var(--story); font-size: 1.08rem; }
+.entry.companion { background: linear-gradient(90deg, #2a2018, #1d1611); }
+.entry.companion .say { font-family: var(--story); font-size: 1.12rem; }
+.entry.companion .who { font-family: var(--display); letter-spacing: 0.04em; }
+.entry.banner { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0.04em; text-shadow: 0 0 14px #d9ac5255; }
+h2.chapter-title { font-size: 1.5rem; }
+.entry.check { background: #1f1711; font-family: var(--story); font-size: 1.05rem; }
+.entry.check strong { font-family: var(--display); font-size: 0.9rem; letter-spacing: 0.03em; }
+.entry.journal-update { font-family: var(--story); font-size: 1rem; }
+.level-burst .entry.journal-update { animation: burst 1.6s ease-out; border-radius: 4px; }
+@keyframes burst { 0% { box-shadow: 0 0 0 0 #d9ac52cc; background: #d9ac5233; } 100% { box-shadow: 0 0 0 18px #d9ac5200; background: transparent; } }
+
+/* A fight is kept like a ledger. */
+.combat-log { background: #170f0b; border: 1px solid #3b2a1b; border-left: 3px solid #6b4a26; font-family: var(--story); font-size: 0.98rem; color: #c9b896; padding-left: 16px; }
+.combat-log li { padding: 1px 0; }
+.combat-log li.round { color: var(--gold); font-family: var(--display); font-size: 0.85rem; letter-spacing: 0.08em; margin-top: 6px; }
+.combat-log li.hit { color: #ecdcb4; }
+.combat-log li.crit { color: #ffd77a; font-weight: 600; text-shadow: 0 0 10px #ffb84a66; }
+.combat-log li.miss { color: #8f7f66; }
+.combat-log li.damage { color: #e58d80; }
+.combat-log li.heal { color: #8fcf8a; }
+.combat-log li.status { color: var(--red); font-weight: 600; }
+
+/* Character cards: leather with a gold edge. */
+.card { background: linear-gradient(#2a1f17, #1b140f); border-color: #5a4329; box-shadow: 0 4px 12px #00000055; }
+.card strong { font-family: var(--display); letter-spacing: 0.02em; }
+.card.active { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 18px #d9ac5244; }
+.hp { overflow: visible; background: #160f0b; border: 1px solid #3b2a1b; }
+.hp .bar { border-radius: 3px; background: linear-gradient(90deg, #6e1f1a, #c4483e 70%, #e0675a); transition: none; }
+.hp-change { position: absolute; right: 8px; top: 0; font-family: var(--display); font-size: 1rem; pointer-events: none; text-shadow: 0 1px 4px #000; }
+.hp-change.down { color: #ff8a7a; }
+.hp-change.up { color: #9be08f; }
+.new-campaign, .level-up, .past-chapter { background: #1d1510cc; }
+.level-up { box-shadow: 0 0 24px #d9ac5233; }
+
+/* The dice tray sits at the foot of the table while a die is in the air. */
+/* The die rolls at the foot of the story, where its line is about to appear, then the tray folds away. */
+.dice-tray { display: grid; justify-items: center; height: 230px; margin-top: 4px; overflow: hidden; pointer-events: none; transition: height 0.4s ease, opacity 0.3s; }
+.dice-tray.hidden { height: 0; opacity: 0; }
+.dice-tray canvas { width: 300px; max-width: 100%; height: 190px; filter: drop-shadow(0 12px 18px #000c); }
+.dice-tray canvas.gone { display: none; }
+.dice-caption { margin-top: -12px; align-self: start; padding: 6px 14px; border-radius: 999px; background: #120d0aee; border: 1px solid #6b5233; font-family: var(--display); font-size: 0.9rem; letter-spacing: 0.03em; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; animation: rise 0.3s ease-out; }
+.dice-tray.good .dice-caption { color: #f3d58a; border-color: var(--gold); }
+.dice-tray.bad .dice-caption { color: #e9a196; border-color: #8a3a32; }
+.dice-tray.nat20 canvas { filter: drop-shadow(0 0 22px #ffd36acc); }
+.dice-tray.nat1 canvas { filter: drop-shadow(0 0 22px #ff4a3acc); }
+.flat-die { width: 72px; height: 72px; display: grid; place-items: center; border-radius: 12px; background: #7a1d22; color: #f3d58a; font: 700 2rem var(--display); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .dice-tray { display: none; } .ink-caret { animation: none; } }

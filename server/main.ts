@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { createServer as createViteServer } from 'vite';
 import { modelSetupFromEnv } from '../src/game/providers';
 import { createApi, SaveStore } from './api';
+import { LiveHub } from './live';
 
 // Your API key lives in .env next to package.json. It is read here and never sent to the browser.
 try {
@@ -11,7 +12,8 @@ try {
 }
 
 const models = modelSetupFromEnv(process.env);
-const api = createApi({ store: new SaveStore('saves'), model: models.client, provider: models.info });
+const live = new LiveHub();
+const api = createApi({ store: new SaveStore('saves'), model: models.client, provider: models.info, live });
 const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
 const port = Number(process.env.PORT ?? 5173);
 
@@ -27,6 +29,15 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (!url.pathname.startsWith('/api/')) return vite.middlewares(req, res);
+  // A running turn, as it happens: server-sent events until the page stops listening.
+  const watching = /^\/api\/games\/([a-z0-9-]{1,64})\/live$/.exec(url.pathname);
+  if (watching && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write(': listening\n\n');
+    const stop = live.subscribe(watching[1]!, (event) => res.write(`data: ${JSON.stringify(event)}\n\n`));
+    req.on('close', stop);
+    return;
+  }
   let result;
   try {
     result = await api(req.method ?? 'GET', url.pathname, await readJson(req));

@@ -23,6 +23,30 @@ const request = (role: CompletionRequest['role']): CompletionRequest => ({
 });
 
 describe('Claude client', () => {
+  it('streams the reply when asked', async () => {
+    const sent: Record<string, unknown>[] = [];
+    async function* events() {
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } };
+      yield { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '{"narration":"Hi' } };
+      yield { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: ' there"}' } };
+      yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+    }
+    const sdk = { messages: { create: async (params: Record<string, unknown>) => (sent.push(params), events()) } } as unknown as Anthropic;
+    const seen: string[] = [];
+    const out = await new ClaudeClient(config, sdk).complete({ ...request('dm'), onText: (t) => seen.push(t) });
+    expect(out).toBe('{"narration":"Hi there"}');
+    expect(seen).toEqual(['', '{"narration":"Hi', '{"narration":"Hi there"}']);
+    expect(sent[0]).toMatchObject({ stream: true, model: 'claude-sonnet-5-5' });
+  });
+
+  it('reports a streamed refusal', async () => {
+    async function* events() {
+      yield { type: 'message_delta', delta: { stop_reason: 'refusal' } };
+    }
+    const sdk = { messages: { create: async () => events() } } as unknown as Anthropic;
+    await expect(new ClaudeClient(config, sdk).complete({ ...request('dm'), onText: () => {} })).rejects.toThrow(/declined/);
+  });
+
   it('sends the system prompt as a cached block, picks the model by role, and returns the text', async () => {
     const { sdk, sent } = fakeSdk({ content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text: '{"narration":"Hi"}', citations: null }] as Anthropic.ContentBlock[] });
     const client = new ClaudeClient(config, sdk);

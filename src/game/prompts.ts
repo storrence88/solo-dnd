@@ -29,7 +29,7 @@ Reply with one JSON object and nothing else:
   "prompt": "the question handing the turn back to the player"
 }
 Skills: athletics, acrobatics, sleightOfHand, stealth, arcana, history, investigation, nature, religion, animalHandling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion. Abilities: str, dex, con, int, wis, cha.
-When you ask for a check, narrate only the attempt, not the result.`;
+When you ask for a check, narrate only the attempt, not the result. The check always decides whether the PLAYER CHARACTER gets what they were trying for: a SUCCESS goes their way and a FAILURE does not. Write "reason" from their side, e.g. "make the bandits back down", never "whether things turn violent".`;
 
 export function describePc(pc: Combatant): string {
   const attacks = pc.attacks.map((a) => `${a.name} ${formatModifier(a.toHit)} (${a.damage})`).join(', ');

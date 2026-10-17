@@ -70,7 +70,7 @@ async function applyDmReply(state: GameState, scene: Scene, model: ModelClient, 
     });
     const followUp = await askDm(
       state, scene, model,
-      'The rules engine has resolved the CHECK above. Narrate what happens because of that result. Do not ask for another check now.',
+      'The rules engine has resolved the CHECK above. A SUCCESS means the player character gets what they were attempting; a FAILURE means they do not. Narrate what happens because of that result. Do not ask for another check now.',
       { allowCheck: false, allowCombat: true },
     );
     await applyDmReply(state, scene, model, followUp);

@@ -6,7 +6,7 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 5 of the plan: the campaign layer. Type an idea and pick a tone, and the DM plans a three-act campaign and writes each chapter as you reach it. You play Steven (a fighter) with two AI companions, Brenna (a cleric) and Quill (a rogue), who remember earlier scenes and react to your choices. The hand-written **The Road to Hollin's Rest** (Greyford Bridge, a night at camp, then Fever at Hollin's Rest) and a solo Greyford Bridge are still there as quick starts.
+Phase 6a of the plan: your own character and levelling up, on top of the Phase 5 campaign layer. Type an idea and pick a tone, and the DM plans a three-act campaign and writes each chapter as you reach it. You play your own character, or Steven (a fighter), with two AI companions, Brenna (a cleric) and Quill (a rogue), who remember earlier scenes and react to your choices. The hand-written **The Road to Hollin's Rest** (Greyford Bridge, a night at camp, then Fever at Hollin's Rest) and a solo Greyford Bridge are still there as quick starts.
 
 ## Campaigns
 
@@ -15,6 +15,8 @@ Phase 5 of the plan: the campaign layer. Type an idea and pick a tone, and the D
 - **Journal.** At the end of each scene the DM records what happened and updates your quests and how each faction feels about you (hostile, wary, neutral, friendly or allied). Changes show in the story and in the journal beside the party.
 - **Acts.** When a scene meets the act's goal, the next act begins. An act aims for two or three chapters; the fourth is pushed to a climax, and a fifth moves on regardless. When the last act ends, the DM writes an epilogue.
 - **Previously on…** Opening a saved game starts with a short recap of the story so far.
+- **Your character.** Pick a name, pronouns, a class (Fighter, Cleric, Rogue or Wizard) and a line or two of background, which the planner weaves into the campaign. Ability scores, skills, gear and spells come from a ready-made build for the class (the standard array placed for it). Quick starts keep Steven.
+- **Levelling up.** Generated campaigns start at level 3. The party reaches level 4 when act 1 ends and level 5 when act 2 ends. At level 4 you raise your abilities (+2 to one, or +1 to two) at camp; Brenna and Quill raise their own, and if you break camp without choosing you get your class's usual pick. Encounter budgets grow with the party's level.
 - **Companion hooks.** Brenna's and Quill's personas are the same in every campaign; why they are here, their mood at the start, and what a betrayal would look like are written per campaign.
 
 ## Running it
@@ -96,16 +98,18 @@ Big moves are earned. A companion whose trust in you is 3 or lower, with at leas
 ## What the engine covers
 
 - **Dice:** expressions like `2d6+3`, advantage and disadvantage, critical hits double the dice. All randomness comes from a seeded RNG, so a fight is reproducible from its seed.
-- **Characters:** four classes at levels 1 to 3 (Fighter/Champion, Cleric/Life, Rogue, Wizard), with hit points, armor class, weapon attacks, proficiency, expertise, saves and spell slots computed from a short spec. Four pregenerated characters live in `src/engine/data/pregens.ts`.
+- **Characters:** four classes at levels 1 to 5 (Fighter/Champion, Cleric/Life, Rogue, Wizard), with hit points, armor class, weapon attacks, proficiency, expertise, saves and spell slots computed from a short spec. Four pregenerated characters live in `src/engine/data/pregens.ts`.
 - **Checks and saves:** ability checks, skill checks, saving throws and passive Perception.
-- **Combat:** initiative, actions and bonus actions, attacks, damage, Multiattack, Second Wind, Action Surge, Sneak Attack, Cunning Action (Hide, Disengage), Dodge, and eight spells (Fire Bolt, Sacred Flame, Burning Hands, Cure Wounds, Guiding Bolt, Healing Word, Magic Missile, Scorching Ray) with upcasting.
+- **Combat:** initiative, actions and bonus actions, attacks, damage, Multiattack, Extra Attack, Second Wind, Action Surge, Sneak Attack, Uncanny Dodge, Cunning Action (Hide, Disengage), Dodge, and nine spells (Fire Bolt, Sacred Flame, Burning Hands, Cure Wounds, Guiding Bolt, Healing Word, Magic Missile, Scorching Ray, Fireball) with upcasting.
 - **Dying:** PCs drop to unconscious at 0 HP, roll death saves, can be stabilized or healed, and die from three failures or massive damage. Monsters die at 0 HP.
 - **Event log:** every change is an event in `Encounter.events`. This is the record the DM and companion agents will read from in later phases.
 
 ## 5e-lite simplifications (for now)
 
 - Theater of the mind: no grid, no movement or ranges. "In melee with" is tracked only for Sneak Attack.
-- No opportunity attacks, reactions, concentration, encumbrance, ammunition, rations or spell components.
+- No opportunity attacks, concentration, encumbrance, ammunition, rations or spell components.
+- The only reaction is the rogue's Uncanny Dodge, which halves the first hit each round automatically.
+- Ability score increases only, no feats. Milestone levelling, no XP.
 - Monster data is hand-entered from the SRD for 17 creatures, from cultists to an ogre and a veteran, without special traits such as pack tactics or undead fortitude; a full SRD import comes later.
 
 ## Layout
@@ -114,7 +118,7 @@ Big moves are earned. A companion whose trust in you is 3 or lower, with at leas
 src/engine/   rules engine (no UI or AI code)
   data/       classes, equipment, spells, monsters, pregens
 src/game/     the DM loop: model client, prompts, reply validation, game state, companions,
-              camp and memory, campaigns (outline, planner, journal) and scenes
+              camp and memory, campaigns (outline, planner, journal), levelling and the character creator, and scenes
 server/       local server: holds the API key, runs the DM loop, saves games
 src/ui/       the play page and the rules sandbox
 ```

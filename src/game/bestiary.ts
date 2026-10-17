@@ -23,6 +23,8 @@ export const BESTIARY: { id: MonsterId; cr: string; note: string }[] = [
 /** Encounter cost by challenge rating, so a generated fight can't outclass a level 3 party of three. */
 const COST: Record<string, number> = { '1/8': 1, '1/4': 1, '1/2': 2, '1': 3, '2': 5, '3': 7 };
 export const ENCOUNTER_BUDGET = 12;
+/** The budget grows as the party levels: 12 at level 3, 16 at 4, 22 at 5. */
+export const encounterBudget = (level: number) => ({ 4: 16, 5: 22 })[level as 4 | 5] ?? ENCOUNTER_BUDGET;
 export const MAX_ENEMIES = 6;
 
 export const monsterCost = (id: MonsterId) => COST[BESTIARY.find((b) => b.id === id)?.cr ?? '3'] ?? 7;

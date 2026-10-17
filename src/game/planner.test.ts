@@ -152,7 +152,7 @@ describe('the end of a generated scene', () => {
     await sceneOver(new FakeModel({ dm: [ends()] }), state);
     await makeCamp(state, currentScene(state)!, new FakeModel());
     expect(state.act).toBe(1);
-    expect(state.transcript.find((e) => e.kind === 'journal')).toEqual({ kind: 'journal', lines: ['Act 2 begins: The Guild\'s Lie'] });
+    expect(state.transcript.find((e) => e.kind === 'journal')).toEqual({ kind: 'journal', lines: ['Act 2 begins: The Guild\'s Lie', 'Level up! The party reaches level 4.'] });
   });
 
   it('ends the campaign with an epilogue when the last act is done', async () => {
@@ -193,7 +193,7 @@ describe('older saves', () => {
   it('gives a Phase 4 game of the Road its companions\' original hooks', () => {
     const v3 = { version: 3, id: 'old', campaignId: 'road', chapter: 1, sceneId: 'hollins-rest', seed: 1, mode: 'explore', transcript: [], history: [], roster: ['brenna', 'quill'], unlockedSecrets: [], removedEnemies: [], checksRolled: 0, beat: 4, party: {}, companions: {} };
     const state = migrateState(v3);
-    expect(state).toMatchObject({ version: 4, act: 0, actChapters: 1, quests: [], factions: [] });
+    expect(state).toMatchObject({ version: 5, level: 3, act: 0, actChapters: 1, quests: [], factions: [] });
     expect(state.hooks.quill?.betrayal).toContain('medicine');
     expect(state.hooks.brenna?.hook).toContain('Hollin\'s Rest');
   });

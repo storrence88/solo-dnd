@@ -136,6 +136,13 @@ h2.chapter-title { text-align: center; font-size: 1.3rem; margin: 6px 0 2px; }
 .tones { display: flex; gap: 8px; flex-wrap: wrap; }
 .tones button { text-transform: capitalize; }
 .tones button.chosen { border-color: var(--gold); color: var(--gold); }
+.creator { display: grid; gap: 8px; }
+.creator-row { display: flex; gap: 8px; }
+.creator input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; background: #15121c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+.creator-row input:last-child { flex: 0 1 9em; }
+.level-up { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--gold); border-radius: 10px; margin-bottom: 10px; }
+.level-up .abilities { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5em, 1fr)); gap: 6px; }
+.level-up .abilities button.chosen { border-color: var(--gold); color: var(--gold); }
 .recap { border: 1px solid var(--gold); border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; background: #221d16; font-family: Georgia, serif; }
 .recap strong { color: var(--gold); }
 .recap p { margin: 6px 0 0; }

@@ -11,6 +11,8 @@ export class RulesError extends Error {}
 interface TurnState {
   actorId: string;
   actionsLeft: number;
+  /** Attacks still owed by an Attack action already taken (Extra Attack). */
+  attacksLeft: number;
   bonusUsed: boolean;
   sneakAttackUsed: boolean;
   /** 5e: after a bonus-action spell, the only other spell this turn is an action cantrip, and vice versa. */
@@ -42,6 +44,8 @@ export class Encounter {
   private turn: TurnState | null = null;
   /** targetId -> ids of creatures in melee with it (used for Sneak Attack). */
   private readonly engaged = new Map<string, Set<string>>();
+  /** Who has spent their reaction since their last turn (Uncanny Dodge). */
+  private readonly reactionUsed = new Set<string>();
 
   constructor(combatants: Combatant[], private readonly rng: Rng) {
     for (const c of combatants) {
@@ -103,7 +107,13 @@ export class Encounter {
     const weapon = attacker.attacks.find((a) => a.id === attackId);
     if (!weapon) throw new RulesError(`${attacker.name} has no attack "${attackId}"`);
     const target = this.requireTarget(targetId);
-    this.spendAction();
+    const turn = this.turn!;
+    if (turn.attacksLeft > 0) {
+      turn.attacksLeft -= 1;
+    } else {
+      this.spendAction();
+      turn.attacksLeft = attacker.features.includes('extraAttack') ? 1 : 0;
+    }
     this.resolveAttack(attacker, target, { ...weapon, isSpell: false });
   }
 
@@ -235,6 +245,12 @@ export class Encounter {
       rolls = [...rolls, ...sneak.rolls];
       expr = `${expr} + ${sneak.expr}`;
       note = 'Sneak Attack';
+    }
+    // Uncanny Dodge: the first hit each round a rogue can react to deals half damage. 5e-lite spends the reaction for them.
+    if (target.features.includes('uncannyDodge') && target.status === 'ok' && !this.reactionUsed.has(target.id)) {
+      this.reactionUsed.add(target.id);
+      total = Math.floor(total / 2);
+      note = note ? `${note}, halved by Uncanny Dodge` : 'halved by Uncanny Dodge';
     }
     this.applyDamage(target, attacker, { total, rolls, expr, damageType: profile.damageType, critical, note });
     return true;
@@ -411,12 +427,13 @@ export class Encounter {
       if (actor.status === 'dead' || actor.status === 'stable') continue;
       this.emit({ type: 'turnStart', actorId: actor.id, round: this.round });
       this.removeCondition(actor, 'dodging');
+      this.reactionUsed.delete(actor.id);
       if (actor.status === 'unconscious') {
         this.deathSave(actor);
         if ((actor.status as Status) !== 'ok') continue;
       }
       this.turn = {
-        actorId: actor.id, actionsLeft: 1, bonusUsed: false, sneakAttackUsed: false,
+        actorId: actor.id, actionsLeft: 1, attacksLeft: 0, bonusUsed: false, sneakAttackUsed: false,
         bonusSpellCast: false, leveledActionSpellCast: false,
       };
       return;

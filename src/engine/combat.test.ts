@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCharacter, buildMonster } from './character';
 import { Encounter, RulesError } from './combat';
 import { BRENNA, ILSA, QUILL, STEVEN } from './data/pregens';
+import { legalActions } from './legal';
 import { scriptedRng, type Rng } from './rng';
 import type { Combatant, GameEvent } from './types';
 
@@ -186,6 +187,35 @@ describe('combat', () => {
     enc.cast('ilsa', 'burningHands', ['a', 'c']);
     expect(enc.get('a').hp).toBe(56);
     expect(enc.get('c').hp).toBe(47);
+  });
+
+  it('gives a level 5 fighter two attacks with one Attack action', () => {
+    const { enc, rng } = fight([buildCharacter({ ...STEVEN, level: 5 }), buildMonster('banditCaptain', 'cap')]);
+    rng.push(2, 2);
+    enc.attack('steven', 'cap', 'longsword');
+    expect(legalActions(enc).some((a) => a.label === 'Longsword → Bandit Captain (Extra Attack)')).toBe(true);
+    expect(legalActions(enc).some((a) => a.action.kind === 'dodge')).toBe(false);
+    enc.attack('steven', 'cap', 'longsword');
+    expect(() => enc.attack('steven', 'cap', 'longsword')).toThrow(RulesError);
+  });
+
+  it('halves the first hit each round on a level 5 rogue with Uncanny Dodge', () => {
+    const { enc, rng } = fight([buildMonster('thug', 't'), buildCharacter({ ...QUILL, level: 5 })]);
+    rng.push(20, 3, 3, 15, 3); // crit: 2d6+2 = 8, halved to 4; second hit 3+2 = 5 in full
+    enc.multiattack('t', ['quill']);
+    const hits = enc.events.filter((e) => e.type === 'damage');
+    expect(hits.map((e) => e.type === 'damage' && e.amount)).toEqual([4, 5]);
+    expect(hits[0]).toMatchObject({ note: 'halved by Uncanny Dodge' });
+  });
+
+  it('casts Fireball from a 3rd-level slot', () => {
+    const { enc, rng } = fight([buildCharacter({ ...ILSA, level: 5, spells: [...ILSA.spells!, 'fireball'] }), buildMonster('ogre', 'o'), buildMonster('orc', 'x')]);
+    rng.push(4, 4, 4, 4, 4, 4, 4, 4); // 8d6 = 32
+    rng.push(1, 20); // ogre fails, orc saves for half
+    enc.cast('ilsa', 'fireball', ['o', 'x']);
+    expect(enc.get('o').hp).toBe(27);
+    expect(enc.get('x').status).toBe('dead');
+    expect(enc.get('ilsa').spellcasting?.slots[3]).toBe(1);
   });
 
   it('heals with Second Wind as a bonus action', () => {

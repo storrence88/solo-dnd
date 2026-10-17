@@ -29,12 +29,14 @@ export function legalActions(enc: Encounter): LegalAction[] {
   const allies = enc.combatants.filter((c) => c.side === actor.side && c.status !== 'dead');
   const out: LegalAction[] = [];
 
-  if (turn.actionsLeft > 0) {
+  if (turn.actionsLeft > 0 || turn.attacksLeft > 0) {
     for (const attack of actor.attacks) {
       for (const foe of foes) {
-        out.push({ action: { kind: 'attack', attackId: attack.id, targetId: foe.id }, label: `${attack.name} → ${foe.name}` });
+        out.push({ action: { kind: 'attack', attackId: attack.id, targetId: foe.id }, label: `${attack.name} → ${foe.name}${turn.attacksLeft > 0 ? ' (Extra Attack)' : ''}` });
       }
     }
+  }
+  if (turn.actionsLeft > 0) {
     out.push({ action: { kind: 'dodge' }, label: 'Dodge' });
     if (!actor.features.includes('cunningAction')) {
       out.push({ action: { kind: 'hide' }, label: 'Hide' }, { action: { kind: 'disengage' }, label: 'Disengage' });
@@ -55,7 +57,7 @@ export function legalActions(enc: Encounter): LegalAction[] {
   }
 
   if (actor.resources.secondWind > 0 && !turn.bonusUsed && actor.hp < actor.maxHp) out.push({ action: { kind: 'secondWind' }, label: 'Second Wind' });
-  if (actor.resources.actionSurge > 0 && turn.actionsLeft === 0) out.push({ action: { kind: 'actionSurge' }, label: 'Action Surge' });
+  if (actor.resources.actionSurge > 0 && turn.actionsLeft === 0 && turn.attacksLeft === 0) out.push({ action: { kind: 'actionSurge' }, label: 'Action Surge' });
   out.push({ action: { kind: 'endTurn' }, label: 'End turn' });
   return out;
 }

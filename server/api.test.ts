@@ -60,6 +60,20 @@ describe('game API', () => {
     expect((recap.body as { recap: string }).recap).toBe('You came to Saltmere.');
   });
 
+  it('starts a campaign as the player\'s own character, and checks level-up choices', async () => {
+    const { api } = await setup(new FakeModel());
+    const bad = await api('POST', '/api/games', { premise: 'salt', tone: 'grim', character: { name: 'Ash', classId: 'bard' } });
+    expect(bad.status).toBe(400);
+    const created = await api('POST', '/api/games', { premise: 'salt', tone: 'grim', character: { name: 'Ash Fen', classId: 'rogue', pronouns: 'he/him', background: 'A smuggler.' } });
+    expect(created.status).toBe(201);
+    const view = created.body as { id: string; pcId: string; level: number; party: { character: { name: string; classId: string } }[] };
+    expect(view).toMatchObject({ pcId: 'ash-fen', level: 3 });
+    expect(view.party[0]!.character).toMatchObject({ name: 'Ash Fen', classId: 'rogue' });
+    const early = await api('POST', `/api/games/${view.id}/levelup`, { boosts: { dex: 2 } });
+    expect(early.status).toBe(400);
+    expect((early.body as { error: string }).error).toMatch(/no level-up/);
+  });
+
   it('never reports the key, and rejects odd ids', async () => {
     const { api } = await setup({ complete: async () => reply('x') });
     const status = await api('GET', '/api/status', null);

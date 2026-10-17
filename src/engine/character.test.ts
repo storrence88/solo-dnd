@@ -39,8 +39,20 @@ describe('character sheets', () => {
     expect(ilsa.spellcasting?.saveDc).toBe(13);
   });
 
-  it('rejects levels outside 1 to 3', () => {
-    expect(() => buildCharacter({ ...STEVEN, level: 4 })).toThrow();
+  it('rejects levels outside 1 to 5', () => {
+    expect(() => buildCharacter({ ...STEVEN, level: 6 })).toThrow();
+    expect(() => buildCharacter({ ...STEVEN, level: 0 })).toThrow();
+  });
+
+  it('grows to level 5: proficiency +3, more hit points, new features and 3rd-level slots', () => {
+    const steven = buildCharacter({ ...STEVEN, level: 5 });
+    expect(steven.proficiencyBonus).toBe(3);
+    expect(steven.maxHp).toBe(44); // 12 + 4 x 8
+    expect(steven.features).toContain('extraAttack');
+    expect(buildCharacter({ ...QUILL, level: 5 })).toMatchObject({ sneakAttackDice: 3 });
+    expect(buildCharacter({ ...QUILL, level: 5 }).features).toContain('uncannyDodge');
+    expect(buildCharacter({ ...ILSA, level: 5 }).spellcasting?.slots).toEqual([0, 4, 3, 2]);
+    expect(buildCharacter({ ...BRENNA, level: 4 }).spellcasting?.slots).toEqual([0, 4, 3]);
   });
 
   it('runs checks against a DC', () => {

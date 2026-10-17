@@ -15,3 +15,4 @@ export { WEAPONS, ARMOR } from './data/equipment';
 export * as pregens from './data/pregens';
 export * from './legal';
 export type { MonsterId } from './data/monsters';
+export type { ClassId } from './data/classes';

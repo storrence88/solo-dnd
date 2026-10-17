@@ -21,7 +21,9 @@ export type Feature =
   | 'improvedCritical'
   | 'sneakAttack'
   | 'cunningAction'
-  | 'discipleOfLife';
+  | 'discipleOfLife'
+  | 'extraAttack'
+  | 'uncannyDodge';
 
 export interface Spellcasting {
   ability: Ability;

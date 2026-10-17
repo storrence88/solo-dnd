@@ -16,6 +16,7 @@ import {
   type ApproachReason,
 } from './prompts';
 import { advanceAct, applyLedger, buildLedgerMessages, parseLedger, planScene } from './planner';
+import { levelled, levelUp, settleLevelUp } from './progression';
 import type { Scene } from './scene';
 import type { Entry, GameState } from './state';
 
@@ -46,7 +47,13 @@ export async function makeCamp(state: GameState, scene: Scene, model: ModelClien
     const ledger = await askWithRetry(model, 'dm', buildLedgerMessages(state, scene), parseLedger);
     const lines = ledger ? applyLedger(state, ledger) : [];
     if (ledger) summary = ledger.summary;
+    const act = state.act;
     const finished = advanceAct(state, ledger?.actDone ?? false, lines);
+    if (state.act > act) {
+      // Milestone levelling: each finished act raises the party a level. The long rest below fills the new hit points.
+      const line = levelUp(state, state.roster.map((id) => companionDef(id).spec));
+      if (line) lines.push(line);
+    }
     if (lines.length) state.transcript.push({ kind: 'journal', lines });
     if (finished) return endCampaign(state, scene, model);
   } else {
@@ -116,7 +123,7 @@ function longRest(state: GameState, scene: Scene): void {
   for (const spec of [scene.pc, ...state.roster.map((id) => companionDef(id).spec)]) {
     const m = state.party[spec.id];
     if (!m || m.dead) continue;
-    const fresh = buildCharacter(spec);
+    const fresh = buildCharacter(levelled(state, spec));
     state.party[spec.id] = { hp: fresh.hp, secondWind: fresh.resources.secondWind, actionSurge: fresh.resources.actionSurge, slots: fresh.spellcasting?.slots };
   }
 }
@@ -163,6 +170,7 @@ export async function campTalk(state: GameState, scene: Scene, model: ModelClien
 export async function breakCamp(state: GameState, scene: Scene, model: ModelClient): Promise<void> {
   if (state.mode !== 'camp' || !state.camp) throw new ModelError('There is no camp right now');
   if (!hasNextChapter(state)) throw new ModelError('The adventure is over');
+  settleLevelUp(state, scene.pc);
   const handWritten = state.outline ? undefined : nextScene(state);
   const ids = livingCompanions(state);
   const party = partyMembers(state, scene);

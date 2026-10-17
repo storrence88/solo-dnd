@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OpenAICompatibleClient, parseJsonObject, providerConfigFromEnv } from './model';
+import { OpenAICompatibleClient, parseJsonObject, providerConfigFromEnv, retryAfterMs } from './model';
 
 describe('provider config', () => {
   it('defaults to Groq and accepts either key name', () => {
@@ -29,9 +29,35 @@ describe('OpenAICompatibleClient', () => {
   });
 
   it('reports HTTP errors', async () => {
-    const fakeFetch = (async () => new Response('rate limited', { status: 429 })) as unknown as typeof fetch;
+    const fakeFetch = (async () => new Response('bad key', { status: 401 })) as unknown as typeof fetch;
     const client = new OpenAICompatibleClient(config, fakeFetch);
-    await expect(client.complete({ role: 'dm', messages: [], json: true })).rejects.toThrow(/429.*rate limited/);
+    await expect(client.complete({ role: 'dm', messages: [], json: true })).rejects.toThrow(/401.*bad key/);
+  });
+
+  it('waits out a rate limit and tries again', async () => {
+    let calls = 0;
+    const waits: number[] = [];
+    const fakeFetch = (async () => {
+      calls++;
+      if (calls === 1) return new Response('{"error":{"message":"Rate limit reached ... Please try again in 4.935s."}}', { status: 429 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new OpenAICompatibleClient(config, fakeFetch, async (ms) => { waits.push(ms); });
+    expect(await client.complete({ role: 'dm', messages: [], json: true })).toBe('ok');
+    expect(waits).toEqual([5185]);
+  });
+
+  it('gives a plain message when the rate limit does not clear', async () => {
+    const fakeFetch = (async () => new Response('try again in 1s', { status: 429 })) as unknown as typeof fetch;
+    const client = new OpenAICompatibleClient(config, fakeFetch, async () => {});
+    await expect(client.complete({ role: 'dm', messages: [], json: true })).rejects.toThrow(/rate limiting/);
+  });
+
+  it('reads waits from headers and Groq messages', () => {
+    expect(retryAfterMs('2', '')).toBe(2250);
+    expect(retryAfterMs(null, 'Please try again in 1m2.5s.')).toBe(62750);
+    expect(retryAfterMs(null, 'try again in 300ms')).toBe(550);
+    expect(retryAfterMs(null, 'nothing useful')).toBe(5000);
   });
 });
 

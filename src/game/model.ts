@@ -39,7 +39,11 @@ export class ModelError extends Error {}
 
 /** Talks to any OpenAI-compatible /chat/completions endpoint (Groq, Ollama, LM Studio, OpenRouter...). */
 export class OpenAICompatibleClient implements ModelClient {
-  constructor(private readonly config: ProviderConfig, private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly config: ProviderConfig,
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  ) {}
 
   async complete(request: CompletionRequest): Promise<string> {
     const model = request.role === 'dm' ? this.config.dmModel : this.config.helperModel;
@@ -47,7 +51,8 @@ export class OpenAICompatibleClient implements ModelClient {
       model,
       messages: request.messages,
       temperature: request.temperature ?? (request.role === 'dm' ? 0.9 : 0.2),
-      max_completion_tokens: request.maxTokens ?? 2048,
+      // Free tiers count this reservation against tokens-per-minute, so keep it no bigger than a turn needs.
+      max_completion_tokens: request.maxTokens ?? (request.role === 'dm' ? 1024 : 512),
     };
     if (request.json) body.response_format = { type: 'json_object' };
     // gpt-oss models think before answering; low effort keeps turns fast.
@@ -55,7 +60,15 @@ export class OpenAICompatibleClient implements ModelClient {
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
-    const res = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) });
+    let res = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) });
+    // Rate limited (e.g. Groq's free tier tokens-per-minute): wait as long as the provider asks, then try again.
+    for (let attempt = 0; res.status === 429 && attempt < 3; attempt++) {
+      const wait = retryAfterMs(res.headers.get('retry-after'), await res.clone().text().catch(() => ''));
+      if (wait > 60_000) break;
+      await this.sleep(wait);
+      res = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) });
+    }
+    if (res.status === 429) throw new ModelError('The model provider is rate limiting us (too many tokens this minute). Wait a moment and try again.');
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new ModelError(`Model call failed (${res.status}): ${text.slice(0, 300)}`);
@@ -65,6 +78,19 @@ export class OpenAICompatibleClient implements ModelClient {
     if (typeof content !== 'string' || !content.trim()) throw new ModelError('Model returned an empty reply');
     return content;
   }
+}
+
+/** How long a 429 asks us to wait: the Retry-After header, or Groq's "try again in 4.9s" / "1m2.5s" text. */
+export function retryAfterMs(header: string | null, body: string): number {
+  const fromHeader = Number(header);
+  if (header && Number.isFinite(fromHeader)) return Math.ceil(fromHeader * 1000) + 250;
+  const m = /try again in (?:(\d+)m)?([\d.]+)(ms|s)/i.exec(body);
+  if (m) {
+    const minutes = Number(m[1] ?? 0);
+    const amount = Number(m[2]);
+    return Math.ceil(minutes * 60_000 + (m[3] === 'ms' ? amount : amount * 1000)) + 250;
+  }
+  return 5_000;
 }
 
 /** Pulls the first JSON object out of a reply, tolerating code fences or stray text around it. */

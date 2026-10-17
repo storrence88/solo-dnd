@@ -117,7 +117,8 @@ async function askDm(
     try {
       text = await model.complete({ role: 'dm', messages, json: true });
     } catch (e) {
-      // Providers in JSON mode reject replies that are not valid JSON; that is worth one more try too.
+      // A rate limit or a bad key won't fix itself on an instant retry; anything else (e.g. JSON mode rejecting the reply) gets one more try.
+      if (/rate limiting|\((401|403)\)/.test((e as Error).message)) throw e;
       lastError = (e as Error).message;
       continue;
     }

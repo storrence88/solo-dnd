@@ -149,7 +149,9 @@ export function Play() {
 
 function Transcript({ entries }: { entries: Entry[] }) {
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), [entries.length]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [entries.length]);
   const lastDm = entries.findLastIndex((e) => e.kind === 'dm');
   return (
     <div className="transcript">

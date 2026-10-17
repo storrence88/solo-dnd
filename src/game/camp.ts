@@ -78,7 +78,7 @@ export async function makeCamp(state: GameState, scene: Scene, model: ModelClien
       const speaker = line % 2 === 0 ? a : b;
       const partner = me(line % 2 === 0 ? b : a);
       const def = companionDef(speaker);
-      const turn = await askWithRetry(model, 'companion', buildBanterMessages(state, scene, def, me(speaker), party, partner, line === 0), (t) => parseTurn(t, { spoken: true }));
+      const turn = await askWithRetry(model, 'companion', buildBanterMessages(state, scene, def, me(speaker), party, partner, line === 0), (t, last) => parseTurn(t, { spoken: true, pronouns: last ? undefined : def.pronouns }));
       if (!turn) break;
       state.transcript.push({ kind: 'companion', id: speaker, name: me(speaker).name, say: turn.say, act: turn.act, thought: turn.thought, role: 'banter' });
     }
@@ -89,7 +89,7 @@ export async function makeCamp(state: GameState, scene: Scene, model: ModelClien
     const cs = state.companions[id]!;
     if (reason === 'confront') cs.warned = true;
     if (reason === 'confide') cs.confided = true;
-    const turn = await askWithRetry(model, 'companion', buildApproachMessages(state, scene, companionDef(id), me(id), party, reason), (t) => parseTurn(t, { spoken: true }));
+    const turn = await askWithRetry(model, 'companion', buildApproachMessages(state, scene, companionDef(id), me(id), party, reason), (t, last) => parseTurn(t, { spoken: true, pronouns: last ? undefined : companionDef(id).pronouns }));
     if (turn) {
       state.transcript.push({ kind: 'companion', id, name: me(id).name, say: turn.say, act: turn.act, thought: turn.thought, role: 'private', hiddenFrom: ids.filter((o) => o !== id) });
     }
@@ -137,7 +137,7 @@ export async function campTalk(state: GameState, scene: Scene, model: ModelClien
   state.transcript.push({ kind: 'player', text: said, hiddenFrom });
   const party = partyMembers(state, scene);
   const me = party.find((c) => c.id === to)!;
-  const reply = await askWithRetry(model, 'companion', buildCampTalkMessages(state, scene, companionDef(to), me, party), parseCampTalk);
+  const reply = await askWithRetry(model, 'companion', buildCampTalkMessages(state, scene, companionDef(to), me, party), (t, last) => parseCampTalk(t, last ? undefined : companionDef(to).pronouns));
   if (!reply) throw new ModelError(`${me.name} didn't answer. Try again.`);
   state.transcript.push({ kind: 'companion', id: to, name: me.name, say: reply.say, act: reply.act, thought: reply.thought, role: 'private', hiddenFrom });
   if (reply.mood) state.companions[to]!.mood = reply.mood;

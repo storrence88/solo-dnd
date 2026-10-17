@@ -40,14 +40,23 @@ function clip(v: unknown, max: number): string {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
 }
 
-/** Any spoken or acted line: a beat, fireside banter, or a word at camp. `spoken` insists on words. */
-export function parseTurn(text: string, { spoken = false } = {}): TurnReply {
+/** Pronouns that never refer to a they/them companion. Other people's "his" may still slip through the check, which is why it only asks once. */
+const WRONG_FOR_THEY = /\b(he|him|his|himself|she|her|hers|herself)\b/i;
+
+/**
+ * Any spoken or acted line: a beat, fireside banter, or a word at camp. `spoken` insists on words.
+ * With `pronouns`, an "act" that calls a they/them companion "he" or "she" is sent back once.
+ */
+export function parseTurn(text: string, { spoken = false, pronouns }: { spoken?: boolean; pronouns?: string } = {}): TurnReply {
   const raw = parseJsonObject(text) as Record<string, unknown>;
   const say = clip(raw.say, 600);
   const act = clip(raw.act, 400);
   const thought = clip(raw.thought, 300);
   if (spoken && !say) throw new ModelError('"say" must not be empty');
   if (!say && !act && !thought) throw new ModelError('Reply with at least "say", "act" or "thought"');
+  if (pronouns === 'they/them' && WRONG_FOR_THEY.test(act)) {
+    throw new ModelError(`"act" must use they/them for you (for example "shifts their weight", "they duck"); if a he or she in it means someone else, use that person's name instead`);
+  }
   const mood = clip(raw.mood, 60) || undefined;
   return { say, act, thought, mood };
 }
@@ -57,8 +66,8 @@ export interface CampTalkReply extends TurnReply {
   because: string;
 }
 
-export function parseCampTalk(text: string): CampTalkReply {
-  return { ...parseTurn(text, { spoken: true }), ...readApproval(parseJsonObject(text) as Record<string, unknown>) };
+export function parseCampTalk(text: string, pronouns?: string): CampTalkReply {
+  return { ...parseTurn(text, { spoken: true, pronouns }), ...readApproval(parseJsonObject(text) as Record<string, unknown>) };
 }
 
 function readMemories(raw: unknown, max: number): { text: string; importance: number }[] {

@@ -224,7 +224,7 @@ export function buildPollMessages(state: GameState, scene: Scene, def: Companion
 }
 
 const SAY_ACT_THOUGHT = (def: CompanionDef) =>
-  `"say": "your words, or empty", "act": "what you physically do, in third person using your name and your pronouns (${def.pronouns}), or empty", "thought": "one private sentence nobody else hears"`;
+  `"say": "your words, or empty", "act": "what you physically do, in third person using your name and your pronouns (${def.pronouns}${def.pronouns === 'they/them' ? `, e.g. "${def.spec.name} shifts their weight", never he or she` : ''}), or empty", "thought": "one private sentence nobody else hears"`;
 
 export function buildCompanionTurnMessages(
   state: GameState,

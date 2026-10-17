@@ -82,3 +82,6 @@ button:disabled { opacity: 0.4; cursor: default; }
 .actions { margin-top: 16px; }
 .buttons.wrap { flex-wrap: wrap; }
 button.end { border-color: var(--gold); }
+.reveal { animation: reveal 0.35s ease-out both; }
+@keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .reveal { animation-duration: 0.01s; } }

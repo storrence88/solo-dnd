@@ -38,6 +38,10 @@ export function Play() {
   const [game, setGame] = useState<GameView | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const reveal = useReveal(game);
+  // While new lines are still appearing, the buttons and HP cards wait so they don't spoil the outcome.
+  const revealing = reveal.revealing;
+  const side = revealing ? reveal.before : game;
 
   useEffect(() => {
     call<Status>('GET', '/api/status').then(setStatus, () => setError('Cannot reach the game server. Start it with "npm run dev".'));
@@ -113,13 +117,13 @@ export function Play() {
 
       <div className="play-grid">
         <section>
-          <Transcript entries={game.transcript} />
-          {game.combat && <CombatLog lines={game.combat.log} />}
+          <Transcript entries={game.transcript} delays={reveal.delays} />
+          {game.combat && <CombatLog lines={game.combat.log} delays={reveal.liveDelays} />}
           {busy && <p className="thinking">The DM is thinking…</p>}
           {error && <p className="error">{error}</p>}
-          {game.mode === 'explore' && <ActBox busy={busy} onSend={(text) => run(() => call('POST', `/api/games/${game.id}/act`, { text }))} />}
-          {game.mode === 'over' && <p className="over">The scene is over. Leave to start another.</p>}
-          {game.combat && (
+          {game.mode === 'explore' && !revealing && <ActBox busy={busy} onSend={(text) => run(() => call('POST', `/api/games/${game.id}/act`, { text }))} />}
+          {game.mode === 'over' && !revealing && <p className="over">The scene is over. Leave to start another.</p>}
+          {game.combat && !revealing && (
             <Actions
               busy={busy}
               view={game}
@@ -128,17 +132,17 @@ export function Play() {
           )}
         </section>
         <aside>
-          {game.combat ? (
+          {side?.combat ? (
             <>
-              <h2>Round {game.combat.round}</h2>
-              {game.combat.combatants.map((c) => (
-                <Card key={c.id} c={c} active={c.id === game.pc.id && game.combat!.yourTurn} />
+              <h2>Round {side.combat.round}</h2>
+              {side.combat.combatants.map((c) => (
+                <Card key={c.id} c={c} active={c.id === side.pc.id && side.combat!.yourTurn && !revealing} />
               ))}
             </>
           ) : (
             <>
               <h2>You</h2>
-              <Card c={game.pc} active={false} />
+              <Card c={(side ?? game).pc} active={false} />
             </>
           )}
         </aside>
@@ -147,7 +151,55 @@ export function Play() {
   );
 }
 
-function Transcript({ entries }: { entries: Entry[] }) {
+const LINE_DELAY = 0.7;
+const ENTRY_DELAY = 0.4;
+
+/**
+ * Entries that arrive after the page loads fade in one after another, combat lines one at a time,
+ * so a round plays out instead of landing all at once. A loaded save shows instantly.
+ */
+function useReveal(game: GameView | null) {
+  const r = useRef({ gameId: '', seen: 0, liveSeen: 0, delays: new Map<number, number[]>(), liveDelays: [] as number[], until: 0, before: game, last: game });
+  const [, rerender] = useState(0);
+  const s = r.current;
+  const live = game?.combat?.log ?? [];
+  if (game && game.id !== s.gameId) {
+    Object.assign(s, { gameId: game.id, seen: game.transcript.length, liveSeen: live.length, liveDelays: [], until: 0, before: game });
+    s.delays.clear();
+  } else if (game && (game.transcript.length > s.seen || live.length !== s.liveSeen)) {
+    let t = 0;
+    for (let i = s.seen; i < game.transcript.length; i++) {
+      const e = game.transcript[i]!;
+      if (e.kind === 'player') {
+        s.delays.set(i, [0]);
+      } else if (e.kind === 'combatLog') {
+        s.delays.set(i, e.lines.map((_, j) => t + j * LINE_DELAY));
+        t += e.lines.length * LINE_DELAY;
+      } else {
+        s.delays.set(i, [t]);
+        t += ENTRY_DELAY;
+      }
+    }
+    // The fight's not-yet-narrated lines (shown under the transcript) continue the same sequence.
+    if (live.length < s.liveSeen || game.transcript.length > s.seen) s.liveSeen = 0;
+    s.liveDelays = live.map((_, j) => (j < s.liveSeen ? -1 : t + (j - s.liveSeen) * LINE_DELAY));
+    t += Math.max(0, live.length - s.liveSeen) * LINE_DELAY;
+    s.liveSeen = live.length;
+    s.seen = game.transcript.length;
+    s.until = Date.now() + t * 1000;
+    s.before = s.last;
+  }
+  s.last = game;
+  const revealing = Date.now() < s.until;
+  useEffect(() => {
+    if (!revealing) return;
+    const timer = setTimeout(() => rerender((n) => n + 1), s.until - Date.now() + 20);
+    return () => clearTimeout(timer);
+  }, [s.until, revealing]);
+  return { revealing, delays: s.delays, liveDelays: s.liveDelays, before: s.before };
+}
+
+function Transcript({ entries, delays }: { entries: Entry[]; delays: Map<number, number[]> }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -156,14 +208,24 @@ function Transcript({ entries }: { entries: Entry[] }) {
   return (
     <div className="transcript">
       {entries.map((e, i) => (
-        <EntryView key={i} e={e} showPrompt={i === lastDm} />
+        <EntryView key={i} e={e} showPrompt={i === lastDm} delays={delays.get(i)} />
       ))}
       <div ref={end} />
     </div>
   );
 }
 
-function EntryView({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
+function EntryView({ e, showPrompt, delays }: { e: Entry; showPrompt: boolean; delays?: number[] }) {
+  if (e.kind === 'combatLog') return <CombatLog lines={e.lines} delays={delays} />;
+  if (!delays) return <EntryBody e={e} showPrompt={showPrompt} />;
+  return (
+    <div className="reveal" style={{ animationDelay: `${delays[0]}s` }}>
+      <EntryBody e={e} showPrompt={showPrompt} />
+    </div>
+  );
+}
+
+function EntryBody({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
   switch (e.kind) {
     case 'dm':
       return (
@@ -196,12 +258,14 @@ function EntryView({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
   }
 }
 
-function CombatLog({ lines }: { lines: string[] }) {
+function CombatLog({ lines, delays }: { lines: string[]; delays?: number[] }) {
   if (!lines.length) return null;
   return (
     <ol className="entry combat-log">
       {lines.map((l, i) => (
-        <li key={i}>{l}</li>
+        <li key={i} className={(delays?.[i] ?? -1) >= 0 ? 'reveal' : undefined} style={(delays?.[i] ?? -1) >= 0 ? { animationDelay: `${delays![i]}s` } : undefined}>
+          {l}
+        </li>
       ))}
     </ol>
   );

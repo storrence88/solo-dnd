@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { createServer as createViteServer } from 'vite';
-import { OpenAICompatibleClient, providerConfigFromEnv } from '../src/game/model';
+import { modelSetupFromEnv } from '../src/game/providers';
 import { createApi, SaveStore } from './api';
 
 // Your API key lives in .env next to package.json. It is read here and never sent to the browser.
@@ -10,8 +10,8 @@ try {
   // No .env file: fine for a local model that needs no key.
 }
 
-const provider = providerConfigFromEnv(process.env);
-const api = createApi({ store: new SaveStore('saves'), model: new OpenAICompatibleClient(provider), provider });
+const models = modelSetupFromEnv(process.env);
+const api = createApi({ store: new SaveStore('saves'), model: models.client, provider: models.info });
 const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
 const port = Number(process.env.PORT ?? 5173);
 
@@ -40,5 +40,5 @@ const server = createServer(async (req, res) => {
 // Bound to this computer only: nobody else on your network can reach the game or spend your quota.
 server.listen(port, '127.0.0.1', () => {
   console.log(`\n  Solo D&D running at http://localhost:${port}`);
-  console.log(provider.apiKey ? `  Model: ${provider.dmModel} via ${new URL(provider.baseUrl).host}` : '  No API key found. Add GROQ_API_KEY to a .env file (see README).');
+  console.log(models.info.hasKey ? `  DM: ${models.info.dmModel} via ${models.info.provider}` : '  No API key found. Add ANTHROPIC_API_KEY or GROQ_API_KEY to a .env file (see README).');
 });

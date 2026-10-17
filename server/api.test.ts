@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ModelClient } from '../src/game/model';
-import { providerConfigFromEnv } from '../src/game/model';
+import { modelSetupFromEnv } from '../src/game/providers';
 import { GREYFORD } from '../src/game/scenes/greyford';
 import { createApi, SaveStore } from './api';
 
@@ -11,7 +11,7 @@ const reply = (narration: string) => JSON.stringify({ narration, action: { type:
 
 async function setup(model: ModelClient) {
   const dir = await mkdtemp(join(tmpdir(), 'solo-dnd-'));
-  const api = createApi({ store: new SaveStore(dir), model, provider: providerConfigFromEnv({ GROQ_API_KEY: 'shh' }) });
+  const api = createApi({ store: new SaveStore(dir), model, provider: modelSetupFromEnv({ GROQ_API_KEY: 'shh' }).info });
   return { api, dir };
 }
 

@@ -3,10 +3,15 @@ import type { CompletionRequest, ModelClient } from '../model';
 /** A scripted model for party tests: it recognises each kind of call from its prompt. */
 export type CallKind =
   | 'dm' | 'helper' | 'poll' | 'companion' | 'combat'
-  | 'chronicle' | 'campMemory' | 'reflection' | 'banter' | 'approach' | 'talk' | 'departure';
+  | 'chronicle' | 'campMemory' | 'reflection' | 'banter' | 'approach' | 'talk' | 'departure'
+  | 'outline' | 'plan' | 'ledger' | 'recap';
 
 function kindOf(req: CompletionRequest): CallKind {
   const text = req.messages.map((m) => m.content).join('\n');
+  if (text.includes('Design a new campaign')) return 'outline';
+  if (text.includes('Write the plan for the next scene')) return 'plan';
+  if (text.includes('You keep the record for a tabletop campaign')) return 'ledger';
+  if (text.includes('"previously on')) return 'recap';
   if (req.role === 'dm') return 'dm';
   if (req.role === 'helper') {
     if (text.includes('"intent"')) return 'poll';
@@ -35,7 +40,7 @@ export class FakeModel implements ModelClient {
   async complete(req: CompletionRequest): Promise<string> {
     const kind = kindOf(req);
     const text = req.messages.map((m) => m.content).join('\n');
-    const who = kind === 'dm' || kind === 'helper' || kind === 'chronicle' ? '' : whoFor(text);
+    const who = ['dm', 'helper', 'chronicle', 'outline', 'plan', 'ledger', 'recap'].includes(kind) ? '' : whoFor(text);
     this.requests.push({ kind, who, text });
     const queue = this.replies[`${kind}:${who}`] ?? this.replies[kind];
     let next = queue?.shift();
@@ -73,6 +78,14 @@ function defaults(kind: CallKind, who: string): unknown {
       return { say: `${who} answers.`, act: '', thought: '', mood: 'calm', approve: 0, because: '' };
     case 'departure':
       return { decision: 'stay', note: '', thought: '' };
+    case 'outline':
+      return OUTLINE;
+    case 'plan':
+      return scenePlan('The Salt Steps');
+    case 'ledger':
+      return { summary: 'The party did a day\'s work.', quests: [], factions: [], actDone: false };
+    case 'recap':
+      return { recap: 'Previously, you crossed a bridge.' };
   }
 }
 
@@ -80,3 +93,43 @@ export const narrate = (narration: string, action: unknown = { type: 'none' }, e
   narration, action, revealed: [], prompt: 'What do you do?', ...extra,
 });
 
+
+/** A complete campaign outline, as the planner might write it. */
+export const OUTLINE = {
+  title: 'The Brine Crown',
+  premise: 'Salt miners are vanishing beneath the town of Saltmere, and the mine guild says nothing.',
+  tone: 'mystery',
+  region: { name: 'Saltmere', description: 'A grey mining town on a cold coast.' },
+  places: [{ name: 'The Deep Galleries', description: 'Old flooded tunnels.' }],
+  factions: [
+    { id: 'guild', name: 'The Salt Guild', description: 'Owns the mine.', goal: 'Hide the drowned shrine they broke into.', attitude: 0 },
+    { id: 'tide-sisters', name: 'Tide Sisters', description: 'Fisherwomen who pray to the sea.', goal: 'Seal the shrine forever.', attitude: 1 },
+  ],
+  threat: { name: 'The Brine Queen', description: 'A drowned saint waking under the mine.', goal: 'Rise and take the town.' },
+  acts: [
+    { title: 'Missing Miners', goal: 'Find out what happened to the miners.', plan: 'The guild broke into a drowned shrine; its keeper takes miners.' },
+    { title: 'The Guild\'s Lie', goal: 'Expose the guild.', plan: 'The guildmaster bargains with the Brine Queen.' },
+    { title: 'The Drowned Shrine', goal: 'Stop the Brine Queen.', plan: 'Seal the shrine or bargain with her.' },
+  ],
+  secrets: ['The guildmaster has been feeding miners to the shrine.'],
+  endings: ['The shrine is sealed.', 'The Brine Queen rises.'],
+  pcHook: 'Steven\'s old friend was one of the missing miners.',
+  companions: {
+    brenna: { hook: 'You came to Saltmere to treat a coughing sickness in the mine.', mood: 'uneasy' },
+    quill: { hook: 'You owe the Salt Guild money.', mood: 'twitchy', betrayal: 'Sell the party out to the guild to clear your debt.' },
+  },
+  firstQuest: { title: 'Find the missing miners', goal: 'Learn what happened to the night shift.' },
+};
+
+/** A scene plan, as the planner might write it. */
+export const scenePlan = (title: string, extra: Record<string, unknown> = {}) => ({
+  title,
+  location: 'Wet stone steps down into the mine.',
+  opening: `${title}: you stand at the top of the salt steps as the night shift fails to come up.`,
+  situation: 'The night shift is missing. The foreman is nervous.',
+  npcs: [{ id: 'foreman', name: 'Foreman Garrow', description: 'A nervous man with a lantern.', goal: 'Keep his job.', voice: 'Mumbles.' }],
+  secrets: [{ id: 'ledger', text: 'The foreman was paid to send the shift down the flooded gallery.', trigger: 'The party presses the foreman or reads his ledger.' }],
+  enemies: [{ id: 'garrow-men', monster: 'thug', name: 'Garrow\'s cousin' }],
+  endings: ['The party goes down the steps.', 'The party leaves.'],
+  ...extra,
+});

@@ -12,7 +12,8 @@ import {
   type Combatant,
   type LegalAction,
 } from '../engine';
-import { CAMPAIGNS, nextScene } from './campaign';
+import { campaignTitle, hasNextChapter, hooksFor, nextScene } from './campaign';
+import { attitudeWord, slug, type CampaignOutline } from './outline';
 import { companionDef, type CompanionDef } from './companions';
 import { nudgeTrust, parseCombatTurn, parsePoll, parseTurn } from './companionReply';
 import { parseDmReply, type DmReply, type DmReplyRules } from './dmReply';
@@ -26,10 +27,14 @@ import {
 } from './prompts';
 import type { Scene } from './scene';
 import { chooseSpeakers, type Poll } from './spotlight';
-import { freshCompanionState, type CombatResult, type CompanionState, type Entry, type GameState, type MemberState } from './state';
+import { freshCompanionState, type CombatResult, type CompanionState, type Entry, type GameState, type MemberState, type Quest } from './state';
 
-/** A new game starting at `scene`, the first scene of campaign `campaignId`. */
-export function newGame(scene: Scene, id: string, seed: number, campaignId = scene.id): GameState {
+/**
+ * A new game starting at `scene`, the first scene of campaign `campaignId`. A generated campaign
+ * passes its outline, and its first scene is kept in the save.
+ */
+export function newGame(scene: Scene, id: string, seed: number, campaignId = scene.id, outline?: CampaignOutline): GameState {
+  const hooks = outline ? structuredClone(outline.hooks) : hooksFor(campaignId);
   const party: Record<string, MemberState> = {};
   const companions: Record<string, CompanionState> = {};
   for (const spec of [scene.pc, ...scene.companions.map((c) => companionDef(c).spec)]) {
@@ -38,10 +43,10 @@ export function newGame(scene: Scene, id: string, seed: number, campaignId = sce
   }
   for (const cid of scene.companions) {
     const def = companionDef(cid);
-    companions[cid] = freshCompanionState(def.startMood, def.startTrust);
+    companions[cid] = freshCompanionState(hooks[cid]?.mood ?? def.startMood, def.startTrust);
   }
-  return {
-    version: 3,
+  const state: GameState = {
+    version: 4,
     id,
     campaignId,
     chapter: 0,
@@ -57,7 +62,19 @@ export function newGame(scene: Scene, id: string, seed: number, campaignId = sce
     beat: 0,
     party,
     companions,
+    hooks,
+    act: 0,
+    actChapters: 0,
+    quests: [],
+    factions: [],
   };
+  if (outline) {
+    state.outline = outline;
+    state.scene = scene;
+    state.quests = [{ id: slug(outline.firstQuest.title, 'quest-1'), title: outline.firstQuest.title, goal: outline.firstQuest.goal, status: 'active', notes: [] }];
+    state.factions = outline.factions.map((f) => ({ id: f.id, name: f.name, description: f.description, attitude: f.attitude, met: false, reasons: [] }));
+  }
+  return state;
 }
 
 /** Every party member, player character first, with current HP, resources and spell slots applied. */
@@ -168,7 +185,7 @@ export function isFatal(e: unknown): boolean {
 }
 
 /** `last` tells the parser this is the final try, so it can let a minor slip through rather than lose the reply. */
-export async function askWithRetry<T>(model: ModelClient, role: 'companion' | 'helper', messages: ChatMessage[], parse: (text: string, last: boolean) => T): Promise<T | null> {
+export async function askWithRetry<T>(model: ModelClient, role: 'dm' | 'companion' | 'helper', messages: ChatMessage[], parse: (text: string, last: boolean) => T): Promise<T | null> {
   const msgs = [...messages];
   for (let attempt = 0; attempt < 2; attempt++) {
     let text: string;
@@ -466,8 +483,13 @@ export interface GameView {
   transcript: Entry[];
   pcId: string;
   party: PartyMemberView[];
-  /** The title of the scene after this one, once this one is over. */
+  /** Once this scene is over: whether another chapter follows, and its title when it is already known. */
+  hasNext: boolean;
   nextTitle?: string;
+  /** A generated campaign's journal: what the player may know of the plan, quests and factions. */
+  journal?: JournalView;
+  /** "Previously on…", when one has been written for where the story stands now. */
+  recap?: string;
   camp?: { approacher?: string; companions: string[] };
   combat?: {
     combatants: Combatant[];
@@ -476,6 +498,15 @@ export interface GameView {
     actions: LegalAction[];
     log: string[];
   };
+}
+
+export interface JournalView {
+  premise: string;
+  region: { name: string; description: string };
+  act: { n: number; total: number; title: string; goal: string };
+  quests: Quest[];
+  /** Only factions the party has dealt with. */
+  factions: { id: string; name: string; description: string; attitude: string }[];
 }
 
 /** Everything the browser may show. DM secrets never leave the server. */
@@ -488,8 +519,9 @@ export function viewGame(state: GameState, scene: Scene): GameView {
   const view: GameView = {
     id: state.id,
     title: scene.title,
-    campaignTitle: CAMPAIGNS[state.campaignId]?.title ?? scene.title,
+    campaignTitle: campaignTitle(state),
     mode: state.mode,
+    hasNext: hasNextChapter(state),
     chapters: state.history.map((c) => ({ title: c.title, outcome: c.outcome, summary: c.summary, transcript: c.transcript })),
     transcript: state.transcript,
     pcId: scene.pc.id,
@@ -497,6 +529,18 @@ export function viewGame(state: GameState, scene: Scene): GameView {
   };
   const next = state.mode === 'over' || state.mode === 'camp' ? nextScene(state) : undefined;
   if (next) view.nextTitle = next.title;
+  const o = state.outline;
+  if (o) {
+    const act = o.acts[Math.min(state.act, o.acts.length - 1)]!;
+    view.journal = {
+      premise: o.premise,
+      region: o.region,
+      act: { n: Math.min(state.act, o.acts.length - 1) + 1, total: o.acts.length, title: act.title, goal: act.goal },
+      quests: state.quests,
+      factions: state.factions.filter((f) => f.met).map((f) => ({ id: f.id, name: f.name, description: f.description, attitude: attitudeWord(f.attitude) })),
+    };
+  }
+  if (state.recap && state.recap.chapter === state.chapter && state.recap.beat === state.beat) view.recap = state.recap.text;
   if (state.mode === 'camp') view.camp = { approacher: state.camp?.approacher, companions: livingCompanions(state) };
   if (state.mode === 'combat' && state.combat) {
     const { enc, waitingOn } = replayCombat(state, scene);

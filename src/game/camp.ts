@@ -1,5 +1,5 @@
 import { buildCharacter } from '../engine';
-import { nextScene } from './campaign';
+import { hasNextChapter, nextScene } from './campaign';
 import { companionDef } from './companions';
 import { nudgeTrust, parseCampMemories, parseCampTalk, parseDeparture, parseReflection, parseTurn } from './companionReply';
 import { askDm, askWithRetry, dmEntry, isFatal, livingCompanions, partyMembers, recordApproval } from './game';
@@ -12,8 +12,10 @@ import {
   buildChronicleMessages,
   buildDepartureMessages,
   buildReflectionMessages,
+  betrayalOf,
   type ApproachReason,
 } from './prompts';
+import { advanceAct, applyLedger, buildLedgerMessages, parseLedger, planScene } from './planner';
 import type { Scene } from './scene';
 import type { Entry, GameState } from './state';
 
@@ -36,14 +38,24 @@ const grievances = (state: GameState, id: string) => state.companions[id]!.appro
  */
 export async function makeCamp(state: GameState, scene: Scene, model: ModelClient): Promise<void> {
   if (state.mode !== 'over') throw new ModelError('The party can only make camp once the scene is over');
-  if (!nextScene(state)) throw new ModelError('The adventure is over');
+  if (!hasNextChapter(state)) throw new ModelError('The adventure is over');
 
   let summary = (state.transcript.findLast((e) => e.kind === 'sceneEnd') as Extract<Entry, { kind: 'sceneEnd' }> | undefined)?.outcome ?? '';
-  try {
-    const raw = parseJsonObject(await model.complete({ role: 'helper', messages: buildChronicleMessages(state, scene), json: true })) as { summary?: unknown };
-    if (typeof raw.summary === 'string' && raw.summary.trim()) summary = raw.summary.trim().slice(0, 1500);
-  } catch (e) {
-    if (isFatal(e)) throw e;
+  if (state.outline) {
+    // A generated campaign's record also moves quests, factions and the act along.
+    const ledger = await askWithRetry(model, 'dm', buildLedgerMessages(state, scene), parseLedger);
+    const lines = ledger ? applyLedger(state, ledger) : [];
+    if (ledger) summary = ledger.summary;
+    const finished = advanceAct(state, ledger?.actDone ?? false, lines);
+    if (lines.length) state.transcript.push({ kind: 'journal', lines });
+    if (finished) return endCampaign(state, scene, model);
+  } else {
+    try {
+      const raw = parseJsonObject(await model.complete({ role: 'helper', messages: buildChronicleMessages(state, scene), json: true })) as { summary?: unknown };
+      if (typeof raw.summary === 'string' && raw.summary.trim()) summary = raw.summary.trim().slice(0, 1500);
+    } catch (e) {
+      if (isFatal(e)) throw e;
+    }
   }
 
   state.transcript.push({ kind: 'campStart' });
@@ -150,8 +162,8 @@ export async function campTalk(state: GameState, scene: Scene, model: ModelClien
  */
 export async function breakCamp(state: GameState, scene: Scene, model: ModelClient): Promise<void> {
   if (state.mode !== 'camp' || !state.camp) throw new ModelError('There is no camp right now');
-  const next = nextScene(state);
-  if (!next) throw new ModelError('The adventure is over');
+  if (!hasNextChapter(state)) throw new ModelError('The adventure is over');
+  const handWritten = state.outline ? undefined : nextScene(state);
   const ids = livingCompanions(state);
   const party = partyMembers(state, scene);
   const me = (id: string) => party.find((c) => c.id === id)!;
@@ -171,31 +183,54 @@ export async function breakCamp(state: GameState, scene: Scene, model: ModelClie
     const cs = state.companions[id]!;
     if (!cs.warned || (cs.trust[scene.pc.id] ?? 5) > LEAVE_AT || grievances(state, id) < GRIEVANCES) continue;
     const def = companionDef(id);
-    const reply = await askWithRetry(model, 'companion', buildDepartureMessages(state, scene, def, me(id), party), (t) => parseDeparture(t, !!def.betrayal));
+    const reply = await askWithRetry(model, 'companion', buildDepartureMessages(state, scene, def, me(id), party), (t) => parseDeparture(t, !!betrayalOf(state, def)));
     if (!reply || reply.decision === 'stay') continue;
     departures.push({ kind: 'departure', id, name: me(id).name, betrayed: reply.decision === 'betray', text: reply.note });
   }
 
   const outcome = (state.transcript.findLast((e) => e.kind === 'sceneEnd') as Extract<Entry, { kind: 'sceneEnd' }> | undefined)?.outcome ?? '';
   const leftNote = departures
-    .map((d) => (d.kind === 'departure' ? `${d.name} left the party that night${d.betrayed ? `, betraying them: ${companionDef(d.id).betrayal}` : '.'}` : ''))
+    .map((d) => (d.kind === 'departure' ? `${d.name} left the party that night${d.betrayed ? `, betraying them: ${betrayalOf(state, companionDef(d.id))}` : '.'}` : ''))
     .join(' ');
   state.history.push({ sceneId: scene.id, title: scene.title, outcome, summary: [state.camp.summary, leftNote].filter(Boolean).join(' '), transcript: state.transcript });
 
   const gone = new Set(departures.map((d) => (d.kind === 'departure' ? d.id : '')));
   state.roster = state.roster.filter((id) => !gone.has(id) && !state.party[id]?.dead);
   state.chapter += 1;
-  state.sceneId = next.id;
   state.mode = 'explore';
-  state.transcript = [{ kind: 'chapter', title: next.title }, ...departures];
   state.unlockedSecrets = [];
   state.removedEnemies = [];
   delete state.camp;
+  delete state.recap;
 
+  if (state.outline) {
+    // The planner writes the new scene with everything up to this morning in mind, so its opening needs no rewrite.
+    const next = await planScene(state, model);
+    state.scene = next;
+    state.sceneId = next.id;
+    state.transcript = [{ kind: 'chapter', title: next.title }, ...departures, { kind: 'dm', text: next.opening, prompt: 'What do you do?' }];
+    return;
+  }
+
+  const next = handWritten!;
+  state.sceneId = next.id;
+  state.transcript = [{ kind: 'chapter', title: next.title }, ...departures];
   const reply = await askDm(
     state, next, model,
     `A new scene begins the next day. Write its opening narration from this OPENING, changed to fit everything in EARLIER CHAPTERS and the party as it is now (who is still with them, what they still carry):\n"${next.opening}"\nStart with one sentence recalling where the party has come from. Do not ask for a check or start combat.`,
     { allowCheck: false, allowCombat: false },
   );
   state.transcript.push(dmEntry(reply));
+}
+
+/** The last act is over: the DM tells how it all turned out, and the campaign ends. */
+async function endCampaign(state: GameState, scene: Scene, model: ModelClient): Promise<void> {
+  const o = state.outline!;
+  const reply = await askDm(
+    state, scene, model,
+    `The campaign is over: this scene resolved its final act. Write the epilogue, up to 250 words this once: how things turned out for the people and factions the party dealt with, and for ${scene.pc.name} and each companion still with them, following from what actually happened. These were possible endings, as a guide only: ${o.endings.join(' / ')}. Do not ask for a check or start combat. In "prompt", write a short closing line instead of a question.`,
+    { allowCheck: false, allowCombat: false },
+  );
+  state.transcript.push({ kind: 'chapter', title: 'Epilogue' }, dmEntry(reply));
+  state.mode = 'ended';
 }

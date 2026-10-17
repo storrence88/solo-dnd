@@ -157,7 +157,7 @@ describe('breaking camp', () => {
     expect(state.roster).toEqual(['brenna']);
     expect(state.transcript[1]).toMatchObject({ kind: 'departure', id: 'quill', betrayed: true });
     expect(state.history[0]!.summary).toContain('Quill left the party that night, betraying them');
-    expect(model.seen('dm')[0]).toContain('QUILL LEFT THE PARTY in the night and took some of the medicine');
+    expect(model.seen('dm')[0]).toContain('QUILL LEFT THE PARTY in the night, betraying them');
     expect(viewGame(state, HOLLINS_REST).party.map((m) => m.character.id)).toEqual(['steven', 'brenna']);
   });
 

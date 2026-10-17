@@ -3,9 +3,11 @@ import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CombatAction } from '../src/engine';
 import { breakCamp, campTalk, makeCamp } from '../src/game/camp';
-import { CAMPAIGNS } from '../src/game/campaign';
+import { CAMPAIGNS, campaignTitle, currentScene } from '../src/game/campaign';
 import { newGame, playerActs, playerCombatAction, viewGame } from '../src/game/game';
 import type { ModelClient } from '../src/game/model';
+import { TONES } from '../src/game/outline';
+import { newCampaign, writeRecap } from '../src/game/planner';
 import type { ProviderInfo } from '../src/game/providers';
 import { SCENES } from '../src/game/scenes';
 import { migrateState, type GameState } from '../src/game/state';
@@ -62,7 +64,7 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
   const busy = new Set<string>();
 
   const sceneFor = (state: GameState) => {
-    const scene = SCENES[state.sceneId];
+    const scene = currentScene(state);
     if (!scene) throw new ApiError(500, `Unknown scene ${state.sceneId}`);
     return scene;
   };
@@ -86,7 +88,7 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
     try {
       const parts = path.replace(/^\/api\/?/, '').split('/').filter(Boolean);
       if (method === 'GET' && parts[0] === 'status' && parts.length === 1) {
-        return { status: 200, body: { hasKey: provider.hasKey, provider: provider.provider, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })) } };
+        return { status: 200, body: { hasKey: provider.hasKey, provider: provider.provider, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })), tones: TONES } };
       }
       if (parts[0] !== 'games') throw new ApiError(404, 'Not found');
       const [, id, sub] = parts;
@@ -96,11 +98,19 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
           const games = await store.list();
           return {
             status: 200,
-            body: games.map((g) => ({ id: g.id, title: CAMPAIGNS[g.campaignId]?.title ?? g.campaignId, scene: SCENES[g.sceneId]?.title ?? g.sceneId, chapter: g.chapter + 1, mode: g.mode, turns: g.beat })),
+            body: games.map((g) => ({ id: g.id, title: campaignTitle(g), scene: currentScene(g)?.title ?? g.sceneId, chapter: g.chapter + 1, mode: g.mode, turns: g.beat })),
           };
         }
         if (method === 'POST') {
-          const campaign = CAMPAIGNS[String((body as { campaignId?: unknown } | null)?.campaignId ?? 'road')];
+          const b = (body ?? {}) as { campaignId?: unknown; premise?: unknown; tone?: unknown };
+          if (b.premise !== undefined || b.tone !== undefined) {
+            // A generated campaign: the DM plans it before the first scene opens.
+            const tone = TONES.includes(b.tone as (typeof TONES)[number]) ? String(b.tone) : 'heroic';
+            const state = await newCampaign(model, { premise: String(b.premise ?? '').slice(0, 500), tone }, randomUUID(), Math.floor(Math.random() * 2 ** 31));
+            await store.save(state);
+            return { status: 201, body: viewGame(state, sceneFor(state)) };
+          }
+          const campaign = CAMPAIGNS[String(b.campaignId ?? 'road')];
           const scene = campaign && SCENES[campaign.scenes[0]!];
           if (!campaign || !scene) throw new ApiError(400, 'Unknown adventure');
           const state = newGame(scene, randomUUID(), Math.floor(Math.random() * 2 ** 31), campaign.id);
@@ -131,6 +141,9 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
         const to = String((body as { to?: unknown } | null)?.to ?? '');
         if (!text.trim()) throw new ApiError(400, 'Say something');
         return await turn(id, (state) => campTalk(state, sceneFor(state), model, text, to));
+      }
+      if (id && sub === 'recap' && method === 'POST') {
+        return await turn(id, (state) => writeRecap(state, sceneFor(state), campaignTitle(state), model));
       }
       if (id && sub === 'break' && method === 'POST') {
         return await turn(id, (state) => breakCamp(state, sceneFor(state), model));

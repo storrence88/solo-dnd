@@ -9,6 +9,7 @@ interface Status {
   provider: string;
   dmModel: string;
   campaigns: { id: string; title: string }[];
+  tones: string[];
 }
 
 interface SavedGame {
@@ -59,7 +60,7 @@ export function Play() {
     call<Status>('GET', '/api/status').then(setStatus, () => setError('Cannot reach the game server. Start it with "npm run dev".'));
     call<SavedGame[]>('GET', '/api/games').then(setSaves, () => {});
     const last = localStorage.getItem(LAST_GAME);
-    if (last) call<GameView>('GET', `/api/games/${last}`).then(setGame, () => localStorage.removeItem(LAST_GAME));
+    if (last) call<GameView>('GET', `/api/games/${last}`).then(resume, () => localStorage.removeItem(LAST_GAME));
   }, []);
 
   const run = async (work: () => Promise<GameView>): Promise<boolean> => {
@@ -78,27 +79,39 @@ export function Play() {
     }
   };
 
+  /** Opens a saved game, with a "previously on" if there is a story to recap. */
+  const resume = (view: GameView) => {
+    setGame(view);
+    localStorage.setItem(LAST_GAME, view.id);
+    if (!view.recap && view.mode !== 'ended' && (view.chapters.length > 0 || view.transcript.some((e) => e.kind === 'player'))) {
+      void run(() => call('POST', `/api/games/${view.id}/recap`));
+    }
+  };
+
   if (!game) {
     return (
       <>
         <header>
           <h1>Solo D&amp;D</h1>
-          <p className="sub">You, a Dungeon Master, and a bridge full of trouble. The AI tells the story; the rules engine rolls every die.</p>
+          <p className="sub">You, a Dungeon Master, and two companions with minds of their own. The AI tells the story; the rules engine rolls every die.</p>
         </header>
         {status && !status.hasKey && <KeyHelp />}
         {error && <p className="error">{error}</p>}
         <section className="start">
+          <NewCampaign busy={busy} tones={status?.tones ?? []} onStart={(premise, tone) => run(() => call('POST', '/api/games', { premise, tone }))} />
+          {busy && <p className="thinking">The DM is planning your campaign. This can take a minute…</p>}
+          <h2>Quick start</h2>
           {status?.campaigns.map((c) => (
             <button key={c.id} disabled={busy} onClick={() => run(() => call('POST', '/api/games', { campaignId: c.id }))}>
-              New game: {c.title}
+              {c.title}
             </button>
           ))}
           {saves.length > 0 && (
             <div className="saves">
               <h2>Continue</h2>
               {saves.map((s) => (
-                <button key={s.id} disabled={busy} onClick={() => run(() => call('GET', `/api/games/${s.id}`))}>
-                  {s.title} · chapter {s.chapter}: {s.scene} · {s.turns} turns{s.mode === 'camp' ? ' · at camp' : s.mode === 'over' ? ' · scene over' : ''}
+                <button key={s.id} disabled={busy} onClick={() => call<GameView>('GET', `/api/games/${s.id}`).then(resume, (e: Error) => setError(e.message))}>
+                  {s.title} · chapter {s.chapter}: {s.scene} · {s.turns} turns{s.mode === 'camp' ? ' · at camp' : s.mode === 'over' ? ' · scene over' : s.mode === 'ended' ? ' · finished' : ''}
                 </button>
               ))}
             </div>
@@ -114,6 +127,7 @@ export function Play() {
         <div>
           <h1>{game.campaignTitle}</h1>
           <p className="sub">
+            {game.journal && `Act ${game.journal.act.n}: ${game.journal.act.title} · `}
             Chapter {game.chapters.length + 1}: {game.title}
             {status && ` · DM: ${status.dmModel} via ${status.provider}`}
           </p>
@@ -132,6 +146,12 @@ export function Play() {
 
       <div className="play-grid">
         <section>
+          {game.recap && (
+            <div className="recap">
+              <strong>Previously…</strong>
+              <p>{game.recap}</p>
+            </div>
+          )}
           {game.chapters.map((c, i) => (
             <PastChapter key={i} n={i + 1} chapter={c} thoughts={thoughts} />
           ))}
@@ -147,8 +167,9 @@ export function Play() {
               onHandOff={() => run(() => call('POST', `/api/games/${game.id}/act`, { handOff: true }))}
             />
           )}
-          {game.mode === 'over' && !revealing && !game.nextTitle && <p className="over">The adventure is over. Leave to start another.</p>}
-          {game.mode === 'over' && !revealing && game.nextTitle && (
+          {game.mode === 'over' && !revealing && !game.hasNext && <p className="over">The adventure is over. Leave to start another.</p>}
+          {game.mode === 'ended' && !revealing && <p className="over">The End. Leave to start another campaign.</p>}
+          {game.mode === 'over' && !revealing && game.hasNext && (
             <div className="act-buttons">
               <button disabled={busy} onClick={() => run(() => call('POST', `/api/games/${game.id}/camp`))}>
                 Make camp for the night
@@ -224,6 +245,7 @@ export function Play() {
                 {enemies.map((c) => (
                   <Card key={c.id} c={c} active={false} />
                 ))}
+                {view.journal && <Journal journal={view.journal} />}
                 {view.party.length > 1 && (
                   <label className="toggle">
                     <input
@@ -262,6 +284,8 @@ function useReveal(game: GameView | null) {
   const [, rerender] = useState(0);
   const s = r.current;
   const live = game?.combat?.log ?? [];
+  // Leaving a game forgets it, so reopening it later shows the story at once.
+  if (!game) s.gameId = '';
   // A new chapter starts a fresh transcript: reveal it from the top.
   if (game && game.id === s.gameId && game.chapters.length !== s.chapter) Object.assign(s, { chapter: game.chapters.length, seen: 0 });
   if (game && game.id !== s.gameId) {
@@ -365,7 +389,7 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
       return (
         <div className={`entry departure${e.betrayed ? ' betrayed' : ''}`}>
           <strong>
-            {e.name.split(' ')[0]} is gone.{e.betrayed ? ' Two crates of medicine are missing.' : ''}
+            {e.name.split(' ')[0]} is gone.{e.betrayed ? ' And they did not leave empty-handed.' : ''}
           </strong>
           <p>“{e.text}”</p>
         </div>
@@ -392,6 +416,14 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
       return <div className="entry banner">{e.result === 'victory' ? 'Victory' : e.result === 'enemiesFled' ? 'The enemies break and flee' : 'Defeat'}</div>;
     case 'sceneEnd':
       return <div className="entry banner">Scene over: {e.outcome}</div>;
+    case 'journal':
+      return (
+        <div className="entry journal-update">
+          {e.lines.map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+      );
   }
 }
 
@@ -461,8 +493,98 @@ function Actions({ view, busy, onPick }: { view: GameView; busy: boolean; onPick
 
 function busyText(game: GameView): string {
   if (game.mode === 'over') return 'The party makes camp…';
-  if (game.mode === 'camp') return 'The night goes on…';
+  if (game.mode === 'camp') return game.journal ? 'The night goes on, and the DM plans the morning…' : 'The night goes on…';
   return game.party.length > 1 ? 'The party and the DM are thinking…' : 'The DM is thinking…';
+}
+
+/** Start a new campaign from an idea and a tone, or let the DM surprise you. */
+function NewCampaign({ busy, tones, onStart }: { busy: boolean; tones: string[]; onStart: (premise: string, tone: string) => void }) {
+  const [premise, setPremise] = useState('');
+  const [tone, setTone] = useState('heroic');
+  return (
+    <div className="new-campaign">
+      <h2>New campaign</h2>
+      <textarea
+        value={premise}
+        maxLength={500}
+        rows={3}
+        placeholder="What's it about? e.g. smugglers in a canal city, a haunted salt mine, a missing heir"
+        onChange={(e) => setPremise(e.target.value)}
+      />
+      <div className="tones">
+        {tones.map((t) => (
+          <button key={t} className={t === tone ? 'chosen' : ''} disabled={busy} onClick={() => setTone(t)}>
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="act-buttons">
+        <button disabled={busy || !premise.trim()} onClick={() => onStart(premise, tone)}>
+          Plan this campaign
+        </button>
+        <button disabled={busy} onClick={() => onStart('', tone)}>
+          Surprise me
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The campaign journal: the act, the quests, and how the factions you've met feel about you. */
+function Journal({ journal }: { journal: NonNullable<GameView['journal']> }) {
+  const active = journal.quests.filter((q) => q.status === 'active');
+  const closed = journal.quests.filter((q) => q.status !== 'active');
+  return (
+    <div className="campaign-journal">
+      <h2>Journal</h2>
+      <details>
+        <summary>{journal.region.name}</summary>
+        <p>{journal.premise}</p>
+        {journal.region.description && <p>{journal.region.description}</p>}
+      </details>
+      <p className="act-line">
+        <strong>
+          Act {journal.act.n} of {journal.act.total}: {journal.act.title}
+        </strong>
+        <span>{journal.act.goal}</span>
+      </p>
+      <h3>Quests</h3>
+      {active.length === 0 && <p className="muted">No open quests.</p>}
+      <ul className="quests">
+        {active.map((q) => (
+          <li key={q.id}>
+            <strong>{q.title}</strong>
+            <span>{q.goal}</span>
+            {q.notes.length > 0 && <small>{q.notes[q.notes.length - 1]}</small>}
+          </li>
+        ))}
+      </ul>
+      {closed.length > 0 && (
+        <details>
+          <summary>Finished ({closed.length})</summary>
+          <ul className="quests closed">
+            {closed.map((q) => (
+              <li key={q.id} className={q.status}>
+                <strong>{q.title}</strong> <span>{q.status === 'done' ? 'done' : 'failed'}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {journal.factions.length > 0 && (
+        <>
+          <h3>Factions</h3>
+          <ul className="factions">
+            {journal.factions.map((f) => (
+              <li key={f.id} title={f.description}>
+                <span>{f.name}</span> <b className={`attitude ${f.attitude}`}>{f.attitude}</b>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
 }
 
 /** An earlier scene: its summary, with the full story a click away. */
@@ -527,7 +649,7 @@ function CampBox({ view, busy, onSay, onBreak }: { view: GameView; busy: boolean
           </button>
         )}
         <button onClick={onBreak} disabled={busy} title="Sleep, then set out in the morning">
-          Break camp: on to {view.nextTitle}
+          {view.nextTitle ? `Break camp: on to ${view.nextTitle}` : 'Break camp at dawn'}
         </button>
       </div>
     </div>

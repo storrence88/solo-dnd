@@ -1,4 +1,7 @@
 import type { CombatAction } from '../engine';
+import { hooksFor } from './campaign';
+import type { CampaignOutline, CompanionHook } from './outline';
+import type { Scene } from './scene';
 
 /** One line of the story so far. The transcript is append-only and is the save file's heart. */
 export type Entry =
@@ -20,7 +23,9 @@ export type Entry =
   /** A companion left the party in the night. `text` is what they left behind for the PC. */
   | { kind: 'departure'; id: string; name: string; betrayed: boolean; text: string }
   /** A new scene starts. */
-  | { kind: 'chapter'; title: string };
+  | { kind: 'chapter'; title: string }
+  /** The journal changed: quests, factions, a new act. Only the player sees these. */
+  | { kind: 'journal'; lines: string[] };
 
 export type CompanionRole = 'lead' | 'support' | 'combat' | 'banter' | 'private';
 
@@ -105,16 +110,45 @@ export interface CampState {
   summary: string;
 }
 
+export type QuestStatus = 'active' | 'done' | 'failed';
+
+export interface Quest {
+  id: string;
+  title: string;
+  goal: string;
+  status: QuestStatus;
+  /** What happened along the way, one line per scene that touched it. */
+  notes: string[];
+}
+
+/** How a faction feels about the party: -2 hostile, -1 wary, 0 neutral, 1 friendly, 2 allied. */
+export interface FactionStanding {
+  id: string;
+  name: string;
+  description: string;
+  attitude: number;
+  /** The party has dealt with them; only then do they show in the journal. */
+  met: boolean;
+  reasons: string[];
+}
+
+/** A "previously on" recap, kept until the story moves on. */
+export interface Recap {
+  text: string;
+  chapter: number;
+  beat: number;
+}
+
 export interface GameState {
-  version: 3;
+  version: 4;
   id: string;
   campaignId: string;
   /** Index of the current scene in the campaign. */
   chapter: number;
   sceneId: string;
   seed: number;
-  /** 'over' means the scene ended; 'camp' is the night before the next scene. */
-  mode: 'explore' | 'combat' | 'over' | 'camp';
+  /** 'over' means the scene ended; 'camp' is the night before the next scene; 'ended' means the whole campaign is done. */
+  mode: 'explore' | 'combat' | 'over' | 'camp' | 'ended';
   /** The current scene (and camp) only. Earlier scenes live in `history`. */
   transcript: Entry[];
   history: Chapter[];
@@ -132,6 +166,18 @@ export interface GameState {
   party: Record<string, MemberState>;
   companions: Record<string, CompanionState>;
   combat?: CombatState;
+  /** Why each companion is on this journey. Hand-written campaigns set them; generated ones write their own. */
+  hooks: Record<string, CompanionHook>;
+  /** A generated campaign's plan. Hand-written campaigns have none. */
+  outline?: CampaignOutline;
+  /** The current scene of a generated campaign (hand-written scenes are looked up by `sceneId`). */
+  scene?: Scene;
+  /** Index of the current act in the outline, and how many chapters it has run so far. */
+  act: number;
+  actChapters: number;
+  quests: Quest[];
+  factions: FactionStanding[];
+  recap?: Recap;
 }
 
 /** A companion's inner state at the start of a game. */
@@ -139,22 +185,34 @@ export function freshCompanionState(mood: string, trust: Record<string, number>)
   return { mood, trust: { ...trust }, lastLed: -1, memories: [], beliefs: [], feeling: '', intention: '', approvals: [] };
 }
 
-type StateV2 = Omit<GameState, 'version' | 'campaignId' | 'chapter' | 'history' | 'roster' | 'camp' | 'companions'> & {
+type V4Only = 'hooks' | 'outline' | 'scene' | 'act' | 'actChapters' | 'quests' | 'factions' | 'recap';
+type StateV3 = Omit<GameState, 'version' | V4Only> & { version: 3 };
+
+type StateV2 = Omit<GameState, V4Only | 'version' | 'campaignId' | 'chapter' | 'history' | 'roster' | 'camp' | 'companions'> & {
   version: 2;
   companions: Record<string, { mood: string; trust: Record<string, number>; lastLed: number }>;
 };
 
-/** Brings an older save up to the current shape. Version 1 saves were solo games; version 2 had no memory or campaign. */
+/**
+ * Brings an older save up to the current shape. Version 1 saves were solo games; version 2 had no
+ * memory or campaign; version 3 had only hand-written campaigns.
+ */
 export function migrateState(raw: unknown): GameState {
   const s = raw as Record<string, unknown>;
-  if (s.version === 3) return raw as GameState;
+  if (s.version === 4) return raw as GameState;
+  const v3 = s.version === 3 ? (raw as StateV3) : fromV2(raw);
+  return { ...v3, version: 4, hooks: hooksFor(v3.campaignId), act: 0, actChapters: v3.chapter, quests: [], factions: [] };
+}
+
+function fromV2(raw: unknown): StateV3 {
+  const s = raw as Record<string, unknown>;
   const v2 = s.version === 2 ? (raw as StateV2) : s.version === 1 ? fromV1(raw) : null;
   if (!v2) throw new Error('Unknown save version');
   const companions: Record<string, CompanionState> = {};
   for (const [id, c] of Object.entries(v2.companions)) companions[id] = { ...freshCompanionState(c.mood, c.trust), lastLed: c.lastLed };
   return {
     ...v2,
-    version: 3,
+    version: 3 as const,
     campaignId: v2.sceneId === 'greyford' ? 'road' : v2.sceneId,
     chapter: 0,
     history: [],

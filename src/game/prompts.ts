@@ -1,6 +1,7 @@
 import { formatModifier, getSpell, type Combatant, type LegalAction } from '../engine';
 import { COMPANIONS, type CompanionDef } from './companions';
 import { recallMemories } from './memory';
+import { attitudeWord } from './outline';
 import type { ChatMessage } from './model';
 import type { Scene } from './scene';
 import type { Entry, GameState } from './state';
@@ -76,16 +77,17 @@ function entryLine(e: Entry, scene: Scene, pcName: string): string {
     case 'campStart':
       return 'NIGHT FALLS: the party makes camp and rests.';
     case 'departure':
-      return `${e.name.toUpperCase()} LEFT THE PARTY in the night${e.betrayed ? ' and took some of the medicine' : ''}. Their note: "${e.text}"`;
+      return `${e.name.toUpperCase()} LEFT THE PARTY in the night${e.betrayed ? ', betraying them' : ''}. Their note: "${e.text}"`;
     case 'chapter':
       return `--- ${e.title} ---`;
     case 'approval':
+    case 'journal':
       return '';
   }
 }
 
-/** Approval reactions are for the player's eyes only; nobody in the story hears them. */
-const inStory = (e: Entry) => e.kind !== 'approval';
+/** Approval reactions and journal updates are for the player's eyes only; nobody in the story hears them. */
+const inStory = (e: Entry) => e.kind !== 'approval' && e.kind !== 'journal';
 
 /** The whole story as the DM sees it: everything except companions' private thoughts. */
 export function transcriptForModel(entries: Entry[], scene: Scene, limit = 30): string {
@@ -130,6 +132,7 @@ export function buildDmMessages(state: GameState, scene: Scene, party: Combatant
   const secrets = scene.secrets.filter((s) => state.unlockedSecrets.includes(s.id));
   const companions = party.filter((c) => c.id !== scene.pc.id && !state.party[c.id]?.dead);
   const sceneBlock = [
+    campaignBlock(state),
     `SCENE: ${scene.title}`,
     `SITUATION: ${scene.situation}`,
     `LOCATION: ${scene.location}`,
@@ -147,6 +150,24 @@ export function buildDmMessages(state: GameState, scene: Scene, party: Combatant
     { role: 'system', content: `${DM_RULES}\n\n${sceneBlock}` },
     { role: 'user', content: `STORY SO FAR:\n${transcriptForModel(state.transcript, scene)}\n\n${instruction}` },
   ];
+}
+
+/** What the narrating DM knows of a generated campaign: its public face, never the plan or its secrets. */
+function campaignBlock(state: GameState): string {
+  const o = state.outline;
+  if (!o) return '';
+  const act = o.acts[Math.min(state.act, o.acts.length - 1)]!;
+  const quests = state.quests.filter((q) => q.status === 'active');
+  return [
+    `CAMPAIGN: ${o.title}. ${o.premise} Tone: ${o.tone}.`,
+    `REGION: ${o.region.name}. ${o.region.description}`,
+    o.pcHook ? `WHY THE PC IS HERE: ${o.pcHook}` : '',
+    `CURRENT ACT (${state.act + 1} of ${o.acts.length}): ${act.title}. The party is working toward: ${act.goal}`,
+    quests.length ? `ACTIVE QUESTS:\n${quests.map((q) => `- ${q.title}: ${q.goal}`).join('\n')}` : '',
+    state.factions.length ? `FACTIONS (attitude toward the party):\n${state.factions.map((f) => `- ${f.name} (${attitudeWord(f.attitude)}): ${f.description}`).join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function earlierChapters(state: GameState): string {
@@ -190,6 +211,7 @@ function companionSystem(state: GameState, def: CompanionDef, me: Combatant, par
   return [
     COMPANION_RULES,
     `WHO YOU ARE (pronouns ${def.pronouns}):\n${def.persona}`,
+    state.hooks[def.id] ? `WHY YOU ARE ON THIS JOURNEY:\n${state.hooks[def.id]!.hook}` : '',
     `YOUR CHARACTER SHEET: ${describePc(me)}`,
     `THE PARTY: ${others.map((c) => describePc(c)).join(' | ')}`,
     memories.length ? `WHAT YOU REMEMBER FROM EARLIER:\n${memories.map((m) => `- ${m.text}`).join('\n')}` : '',
@@ -387,12 +409,18 @@ export function buildCampTalkMessages(state: GameState, scene: Scene, def: Compa
   ];
 }
 
+/** What betraying the party would mean for this companion in this story, if they ever would. */
+export function betrayalOf(state: GameState, def: CompanionDef): string | undefined {
+  return def.betrayal && (state.hooks[def.id]?.betrayal ?? def.betrayal);
+}
+
 /** At dawn, a companion who has lost all trust decides whether to stay. */
 export function buildDepartureMessages(state: GameState, scene: Scene, def: CompanionDef, me: Combatant, party: Combatant[]): ChatMessage[] {
   const cs = state.companions[def.id]!;
   const pc = scene.pc.name;
   const negatives = cs.approvals.filter((a) => a.delta < 0).map((a) => a.why);
-  const choices = def.betrayal ? '"stay" | "leave" | "betray"' : '"stay" | "leave"';
+  const betrayal = betrayalOf(state, def);
+  const choices = betrayal ? '"stay" | "leave" | "betray"' : '"stay" | "leave"';
   return [
     { role: 'system', content: companionSystem(state, def, me, party, recentCue(state)) },
     {
@@ -401,7 +429,7 @@ export function buildDepartureMessages(state: GameState, scene: Scene, def: Comp
         `STORY (what you have seen and heard):\n${perceptionFor(def.id, state.transcript, scene, 30, { skipCombatLog: true })}\n\n` +
         `It is the dark before dawn. Your trust in ${pc} is down to ${cs.trust[scene.pc.id]}/10, worn away by: ${negatives.join('; ')}. You already told them what was wrong.\n` +
         `Decide, as yourself, whether to stay with the party.\n- "stay": you give them one more chance.\n- "leave": ${def.departure}\n` +
-        (def.betrayal ? `- "betray": ${def.betrayal}\n` : '') +
+        (betrayal ? `- "betray": ${betrayal}\n` : '') +
         `If you go, "note" is what you leave behind for ${pc}: in your own voice, naming what drove you away. Under 60 words.\n` +
         `Reply with JSON only: {"decision": ${choices}, "note": "...", "thought": "one private sentence"}`,
     },

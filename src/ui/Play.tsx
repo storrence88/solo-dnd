@@ -19,6 +19,15 @@ interface SavedGame {
 }
 
 const LAST_GAME = 'solo-dnd:last-game';
+const SHOW_THOUGHTS = 'solo-dnd:show-thoughts';
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -38,6 +47,7 @@ export function Play() {
   const [game, setGame] = useState<GameView | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [thoughts, setThoughts] = useState(() => readFlag(SHOW_THOUGHTS));
   const reveal = useReveal(game);
   // While new lines are still appearing, the buttons and HP cards wait so they don't spoil the outcome.
   const revealing = reveal.revealing;
@@ -117,11 +127,18 @@ export function Play() {
 
       <div className="play-grid">
         <section>
-          <Transcript entries={game.transcript} delays={reveal.delays} />
+          <Transcript entries={game.transcript} delays={reveal.delays} thoughts={thoughts} />
           {game.combat && <CombatLog lines={game.combat.log} delays={reveal.liveDelays} />}
-          {busy && <p className="thinking">The DM is thinking…</p>}
+          {busy && <p className="thinking">{game.party.length > 1 ? 'The party and the DM are thinking…' : 'The DM is thinking…'}</p>}
           {error && <p className="error">{error}</p>}
-          {game.mode === 'explore' && !revealing && <ActBox busy={busy} onSend={(text) => run(() => call('POST', `/api/games/${game.id}/act`, { text }))} />}
+          {game.mode === 'explore' && !revealing && (
+            <ActBox
+              busy={busy}
+              hasParty={game.party.length > 1}
+              onSend={(text) => run(() => call('POST', `/api/games/${game.id}/act`, { text }))}
+              onHandOff={() => run(() => call('POST', `/api/games/${game.id}/act`, { handOff: true }))}
+            />
+          )}
           {game.mode === 'over' && !revealing && <p className="over">The scene is over. Leave to start another.</p>}
           {game.combat && !revealing && (
             <Actions
@@ -132,19 +149,52 @@ export function Play() {
           )}
         </section>
         <aside>
-          {side?.combat ? (
-            <>
-              <h2>Round {side.combat.round}</h2>
-              {side.combat.combatants.map((c) => (
-                <Card key={c.id} c={c} active={c.id === side.pc.id && side.combat!.yourTurn && !revealing} />
-              ))}
-            </>
-          ) : (
-            <>
-              <h2>You</h2>
-              <Card c={(side ?? game).pc} active={false} />
-            </>
-          )}
+          {(() => {
+            const view = side ?? game;
+            const inner = (id: string) => view.party.find((m) => m.character.id === id)?.companion;
+            const nameOf = (id: string) => view.party.find((m) => m.character.id === id)?.character.name.split(' ')[0] ?? id;
+            const innerLine = (id: string) => {
+              const c = inner(id);
+              if (!thoughts || !c) return null;
+              const trust = Object.entries(c.trust).map(([who, n]) => `${nameOf(who)} ${n}`).join(', ');
+              return <p className="inner">Mood: {c.mood} · Trust: {trust}</p>;
+            };
+            const combatants = view.combat?.combatants ?? view.party.map((m) => m.character);
+            const party = combatants.filter((c) => c.side === 'party');
+            const enemies = combatants.filter((c) => c.side === 'enemy');
+            return (
+              <>
+                <h2>{view.combat ? `Round ${view.combat.round}` : view.party.length > 1 ? 'Party' : 'You'}</h2>
+                {party.map((c) => (
+                  <div key={c.id}>
+                    <Card c={c} active={c.id === view.pcId && !!view.combat?.yourTurn && !revealing} />
+                    {innerLine(c.id)}
+                  </div>
+                ))}
+                {enemies.length > 0 && <h2 className="enemies">Enemies</h2>}
+                {enemies.map((c) => (
+                  <Card key={c.id} c={c} active={false} />
+                ))}
+                {view.party.length > 1 && (
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={thoughts}
+                      onChange={(e) => {
+                        setThoughts(e.target.checked);
+                        try {
+                          localStorage.setItem(SHOW_THOUGHTS, e.target.checked ? '1' : '0');
+                        } catch {
+                          // The setting just won't be remembered.
+                        }
+                      }}
+                    />
+                    Peek at companions' thoughts
+                  </label>
+                )}
+              </>
+            );
+          })()}
         </aside>
       </div>
     </div>
@@ -199,7 +249,7 @@ function useReveal(game: GameView | null) {
   return { revealing, delays: s.delays, liveDelays: s.liveDelays, before: s.before };
 }
 
-function Transcript({ entries, delays }: { entries: Entry[]; delays: Map<number, number[]> }) {
+function Transcript({ entries, delays, thoughts }: { entries: Entry[]; delays: Map<number, number[]>; thoughts: boolean }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -208,25 +258,35 @@ function Transcript({ entries, delays }: { entries: Entry[]; delays: Map<number,
   return (
     <div className="transcript">
       {entries.map((e, i) => (
-        <EntryView key={i} e={e} showPrompt={i === lastDm} delays={delays.get(i)} />
+        <EntryView key={i} e={e} showPrompt={i === lastDm} delays={delays.get(i)} thoughts={thoughts} />
       ))}
       <div ref={end} />
     </div>
   );
 }
 
-function EntryView({ e, showPrompt, delays }: { e: Entry; showPrompt: boolean; delays?: number[] }) {
+function EntryView({ e, showPrompt, delays, thoughts }: { e: Entry; showPrompt: boolean; delays?: number[]; thoughts: boolean }) {
   if (e.kind === 'combatLog') return <CombatLog lines={e.lines} delays={delays} />;
-  if (!delays) return <EntryBody e={e} showPrompt={showPrompt} />;
+  if (!delays) return <EntryBody e={e} showPrompt={showPrompt} thoughts={thoughts} />;
   return (
     <div className="reveal" style={{ animationDelay: `${delays[0]}s` }}>
-      <EntryBody e={e} showPrompt={showPrompt} />
+      <EntryBody e={e} showPrompt={showPrompt} thoughts={thoughts} />
     </div>
   );
 }
 
-function EntryBody({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
+function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean; thoughts: boolean }) {
   switch (e.kind) {
+    case 'companion':
+      if (!e.say && !e.act && !(thoughts && e.thought)) return null;
+      return (
+        <div className={`entry companion ${e.id}`}>
+          <strong className="who">{e.name.split(' ')[0]}</strong>
+          {e.act && <span className="act">{e.act}</span>}
+          {e.say && <span className="say">“{e.say}”</span>}
+          {thoughts && e.thought && <span className="thought">thinks: {e.thought}</span>}
+        </div>
+      );
     case 'dm':
       return (
         <div className="entry dm">
@@ -235,11 +295,14 @@ function EntryBody({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
         </div>
       );
     case 'player':
-      return <div className="entry player">{e.text}</div>;
+      return <div className={`entry player${e.handOff ? ' handoff' : ''}`}>{e.text}</div>;
     case 'check':
       return (
         <div className={`entry check ${e.success ? 'success' : 'failure'}`}>
-          <strong>{e.label} check, DC {e.dc}</strong>
+          <strong>
+            {e.whoName && e.who !== 'steven' ? `${e.whoName.split(' ')[0]}: ` : ''}
+            {e.label} check, DC {e.dc}
+          </strong>
           <span>
             d20 {e.rolls.length > 1 ? `(${e.rolls.join(', ')})` : e.rolls[0]} {e.modifier >= 0 ? '+' : '−'} {Math.abs(e.modifier)} = <b>{e.total}</b>
           </span>
@@ -252,7 +315,7 @@ function EntryBody({ e, showPrompt }: { e: Entry; showPrompt: boolean }) {
     case 'combatLog':
       return <CombatLog lines={e.lines} />;
     case 'combatEnd':
-      return <div className="entry banner">{e.result === 'victory' ? 'Victory' : e.result === 'enemiesFled' ? 'The enemies break and flee' : 'You fall'}</div>;
+      return <div className="entry banner">{e.result === 'victory' ? 'Victory' : e.result === 'enemiesFled' ? 'The enemies break and flee' : 'Defeat'}</div>;
     case 'sceneEnd':
       return <div className="entry banner">Scene over: {e.outcome}</div>;
   }
@@ -271,7 +334,7 @@ function CombatLog({ lines, delays }: { lines: string[]; delays?: number[] }) {
   );
 }
 
-function ActBox({ busy, onSend }: { busy: boolean; onSend: (text: string) => Promise<boolean> }) {
+function ActBox({ busy, hasParty, onSend, onHandOff }: { busy: boolean; hasParty: boolean; onSend: (text: string) => Promise<boolean>; onHandOff: () => void }) {
   const [text, setText] = useState('');
   const send = async () => {
     if (!text.trim() || busy) return;
@@ -291,9 +354,16 @@ function ActBox({ busy, onSend }: { busy: boolean; onSend: (text: string) => Pro
           }
         }}
       />
-      <button onClick={send} disabled={busy || !text.trim()}>
-        Send
-      </button>
+      <div className="act-buttons">
+        <button onClick={send} disabled={busy || !text.trim()}>
+          Send
+        </button>
+        {hasParty && (
+          <button onClick={onHandOff} disabled={busy} title="Hold back and let a companion take the lead this beat">
+            Let the party act
+          </button>
+        )}
+      </div>
     </div>
   );
 }

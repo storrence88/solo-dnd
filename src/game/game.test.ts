@@ -2,22 +2,39 @@ import { describe, expect, it } from 'vitest';
 import { legalActions } from '../engine';
 import { newGame, playerActs, playerCombatAction, replayCombat, viewGame } from './game';
 import type { CompletionRequest, ModelClient } from './model';
-import { GREYFORD } from './scenes/greyford';
+import { GREYFORD_SOLO as GREYFORD } from './scenes/greyford';
 import type { GameState } from './state';
 
-/** Returns scripted replies per role, and remembers every request so tests can check what the model saw. */
+type CallKind = 'dm' | 'helper' | 'poll' | 'companion' | 'combat';
+
+/** What kind of call a request is: the DM, the secrets gatekeeper ("helper"), a spotlight poll, a companion's turn, or a companion's combat turn. */
+function kindOf(req: CompletionRequest): CallKind {
+  const text = req.messages.map((m) => m.content).join('\n');
+  if (req.role === 'dm') return 'dm';
+  if (req.role === 'helper') return text.includes('"intent"') ? 'poll' : 'helper';
+  return text.includes('YOUR OPTIONS RIGHT NOW') ? 'combat' : 'companion';
+}
+
+const DEFAULTS: Record<CallKind, unknown> = {
+  dm: { narration: 'The river roars.', action: { type: 'none' }, revealed: [], prompt: 'What do you do?' },
+  helper: { met: [] },
+  poll: { intent: 'pass', urgency: 1 },
+  companion: { say: 'Hm.', act: '', thought: 'Watching.', mood: 'wary', trust: {} },
+  combat: { choices: [0], say: '', thought: '' },
+};
+
+/** Returns scripted replies per kind of call, and remembers every request so tests can check what the model saw. */
 class FakeModel implements ModelClient {
-  requests: CompletionRequest[] = [];
-  constructor(private replies: { dm?: unknown[]; helper?: unknown[] }) {}
+  requests: { kind: CallKind; text: string; req: CompletionRequest }[] = [];
+  constructor(private replies: Partial<Record<CallKind, unknown[]>>) {}
   async complete(req: CompletionRequest): Promise<string> {
-    this.requests.push(req);
-    const queue = this.replies[req.role] ?? [];
-    const next = queue.shift();
-    if (next === undefined) return req.role === 'helper' ? '{"met":[]}' : JSON.stringify(narrate('The river roars.'));
+    const kind = kindOf(req);
+    this.requests.push({ kind, req, text: req.messages.map((m) => m.content).join('\n') });
+    const next = this.replies[kind]?.shift() ?? DEFAULTS[kind];
     return typeof next === 'string' ? next : JSON.stringify(next);
   }
-  seen(role: 'dm' | 'helper'): string[] {
-    return this.requests.filter((r) => r.role === role).map((r) => r.messages.map((m) => m.content).join('\n'));
+  seen(kind: CallKind): string[] {
+    return this.requests.filter((r) => r.kind === kind).map((r) => r.text);
   }
 }
 
@@ -98,7 +115,7 @@ describe('exploration', () => {
     expect(kinds).toEqual(['player', 'dm', 'check', 'dm']);
     const check = state.transcript[3]!;
     if (check.kind !== 'check') throw new Error('expected a check');
-    expect(check).toMatchObject({ label: 'Insight', dc: 12, reason: 'read Vess' });
+    expect(check).toMatchObject({ who: 'steven', whoName: 'Steven', label: 'Insight', dc: 12, reason: 'read Vess' });
     expect(check.total).toBe(check.rolls[0]! + check.modifier);
     expect(check.success).toBe(check.total >= 12);
     expect(state.checksRolled).toBe(1);
@@ -199,8 +216,8 @@ describe('combat', () => {
       expect(end, `seed ${seed}`).toBeDefined();
       if (end?.kind !== 'combatEnd') continue;
       expect(state.combat).toBeUndefined();
-      expect(state.pc.hp).toBeGreaterThanOrEqual(1);
-      if (end.result === 'defeat') expect(state.pc.hp).toBe(1);
+      expect(state.party.steven!.hp).toBeGreaterThanOrEqual(1);
+      if (end.result === 'defeat') expect(state.party.steven!.hp).toBe(1);
       if (end.result === 'enemiesFled') expect(state.removedEnemies.sort()).toEqual(['corrin', 'gorr', 'vess']);
       if (state.mode === 'explore') {
         expect(viewGame(state, scene).combat).toBeUndefined();

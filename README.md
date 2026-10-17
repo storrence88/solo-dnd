@@ -6,7 +6,7 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 2 of the plan: the DM loop. You can play the Greyford Bridge scene solo with an AI Dungeon Master. Companions arrive in Phase 3.
+Phase 3 of the plan: companions. You play the Greyford Bridge scene with two AI companions, Brenna (a cleric) and Quill (a rogue), and an AI Dungeon Master. A solo version of the scene is still there. Memory across sessions and relationships come in Phase 4.
 
 ## Running it
 
@@ -43,14 +43,21 @@ Any OpenAI-compatible endpoint works. For example, to run Ollama on your own PC,
 LLM_BASE_URL=http://localhost:11434/v1
 DM_MODEL=gpt-oss:120b
 HELPER_MODEL=gpt-oss:20b
+# COMPANION_MODEL defaults to DM_MODEL
 ```
 
 ## How a turn works
 
+With companions, each beat goes: you act, then the companions react, then the DM resolves it all.
+
+- **Perception:** every character's view is built from the shared story. A companion sees only what it could perceive, its own private thoughts, and never the DM's secrets or the other companion's thoughts. Quill's own secret lives only in Quill's prompt.
+- **Spotlight:** after you act, each companion quickly says whether it wants to lead, support or pass, and how urgently. The code adds to that: naming a companion hands them the lead, moments touching their interests (Brenna: the sick, healing, faith; Quill: locks, coin, lies, Corrin) pull them in, and a companion who hasn't led in a while gets a nudge. One companion leads and the other reacts in a line. **Let the party act** holds you back so a companion takes the lead.
+- **Inner state:** each companion keeps a mood and a 0-10 trust score toward each party member, which moves at most one point a beat. Tick **Peek at companions' thoughts** to see it, along with their private thoughts.
+
 - You type what your character does. A small helper model checks whether you have met the trigger for any of the scene's hidden secrets; the DM is only ever shown secrets that have been unlocked.
 - The DM replies with JSON: narration, a question handing the turn back, and one action (nothing, ask for a check, start combat, or end the scene). Replies that break a rule, such as revealing a locked secret or adding an enemy who isn't in the scene, are sent back once for a fix.
 - Checks are rolled by the rules engine, then the DM narrates the result it was given.
-- In combat, you choose from buttons listing only legal moves, enemies are run by the engine, and the DM narrates each round from the event log. If the enemies lose half their total HP, the survivors break and flee. If you drop, you are knocked out, not killed.
+- In combat, you choose from buttons listing only legal moves, companions pick theirs from the same kind of list, enemies are run by the engine, and the DM narrates each round from the event log. If the enemies lose half their total HP, the survivors break and flee. If you drop, you are knocked out, not killed.
 
 ## What the engine covers
 

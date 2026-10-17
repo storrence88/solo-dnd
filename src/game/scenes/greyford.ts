@@ -1,10 +1,10 @@
 import { pregens } from '../../engine';
 import type { Scene } from '../scene';
 
-/** The Phase 0 playtest scene, rebuilt for a solo hero. */
-export const GREYFORD: Scene = {
-  id: 'greyford',
-  title: 'The Toll at Greyford Bridge',
+/** The Phase 0 playtest scene, for a solo hero. */
+export const GREYFORD_SOLO: Scene = {
+  id: 'greyford-solo',
+  title: 'The Toll at Greyford Bridge (solo)',
   opening:
     'Dusk. You are escorting a small wagon of fever medicine to Hollin\'s Rest, where your sister lives and the sickness is spreading. ' +
     'The river is swollen and loud. At Greyford Bridge, three armed figures block the narrow stone span.',
@@ -66,4 +66,42 @@ export const GREYFORD: Scene = {
     'The PC turns back.',
   ],
   pc: pregens.STEVEN,
+  companions: [],
+};
+
+/** The full playtest scene: Steven with Brenna and Quill against Vess and four bandits. */
+export const GREYFORD: Scene = {
+  ...GREYFORD_SOLO,
+  id: 'greyford',
+  title: 'The Toll at Greyford Bridge',
+  opening:
+    'Dusk. You, Brenna and Quill are escorting a small wagon of fever medicine to Hollin\'s Rest, where your sister lives and the sickness is spreading. ' +
+    'The river is swollen and loud. At Greyford Bridge, five armed figures block the narrow stone span.',
+  situation:
+    'The party (the PC, Brenna the cleric and Quill the halfling rogue) escorts a wagon of medicine to the village of Hollin\'s Rest, where a fever is spreading. ' +
+    'Five bandits block Greyford Bridge at dusk and demand a toll: half the medicine. The river below is swollen and dangerous.',
+  npcs: [
+    ...GREYFORD_SOLO.npcs,
+    {
+      id: 'sef-tam',
+      name: 'Sef and Tam',
+      description: 'Two young bandits with clubs and scimitars, hanging back behind Vess.',
+      goal: 'Do what Vess says and not get hurt.',
+      voice: 'Nervous mutters.',
+    },
+  ],
+  secrets: [
+    ...GREYFORD_SOLO.secrets,
+    {
+      id: 'corrin-knows-quill',
+      text: 'Corrin recognises Quill: they ran jobs together in the river cities, and Quill got away when Corrin was caught and jailed. Corrin is bitter. He may expose Quill as a thief in front of the party, or offer Quill a private deal: help the bandits take the wagon and the past stays buried.',
+      trigger: 'Corrin gets a good look at Quill (Quill comes close, speaks to the bandits, or the bandits study the party), or someone mentions Quill\'s past.',
+    },
+  ],
+  enemies: [
+    ...GREYFORD_SOLO.enemies,
+    { id: 'sef', monster: 'bandit', name: 'Sef' },
+    { id: 'tam', monster: 'bandit', name: 'Tam' },
+  ],
+  companions: ['brenna', 'quill'],
 };

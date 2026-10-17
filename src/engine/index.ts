@@ -10,7 +10,7 @@ export * from './scenarios';
 export * from './types';
 export { CLASSES } from './data/classes';
 export { MONSTERS } from './data/monsters';
-export { SPELLS } from './data/spells';
+export { SPELLS, getSpell } from './data/spells';
 export { WEAPONS, ARMOR } from './data/equipment';
 export * as pregens from './data/pregens';
 export * from './legal';

@@ -5,7 +5,8 @@ import type { CombatAction } from '../src/engine';
 import { breakCamp, campTalk, makeCamp } from '../src/game/camp';
 import { CAMPAIGNS } from '../src/game/campaign';
 import { newGame, playerActs, playerCombatAction, viewGame } from '../src/game/game';
-import type { ModelClient, ProviderConfig } from '../src/game/model';
+import type { ModelClient } from '../src/game/model';
+import type { ProviderInfo } from '../src/game/providers';
 import { SCENES } from '../src/game/scenes';
 import { migrateState, type GameState } from '../src/game/state';
 
@@ -56,7 +57,7 @@ export class SaveStore {
  * The game's HTTP API, independent of the web server so it can be tested directly.
  * The model client and API key stay here on the server; the browser only ever gets a GameView.
  */
-export function createApi(opts: { store: SaveStore; model: ModelClient; provider: ProviderConfig }) {
+export function createApi(opts: { store: SaveStore; model: ModelClient; provider: ProviderInfo }) {
   const { store, model, provider } = opts;
   const busy = new Set<string>();
 
@@ -85,7 +86,7 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
     try {
       const parts = path.replace(/^\/api\/?/, '').split('/').filter(Boolean);
       if (method === 'GET' && parts[0] === 'status' && parts.length === 1) {
-        return { status: 200, body: { hasKey: provider.apiKey !== '', provider: new URL(provider.baseUrl).host, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })) } };
+        return { status: 200, body: { hasKey: provider.hasKey, provider: provider.provider, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })) } };
       }
       if (parts[0] !== 'games') throw new ApiError(404, 'Not found');
       const [, id, sub] = parts;

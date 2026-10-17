@@ -73,8 +73,30 @@ describe('a party beat', () => {
     expect(model.seen('dm')[0]).toContain('Quill (companion, id quill, pronouns they/them)');
     expect(model.seen('dm')[0]).toContain('Brenna Ashford (companion, id brenna, pronouns she/her)');
     const quillTurn = model.seen('companion', 'quill')[0]!;
-    expect(quillTurn).toContain('your pronouns (they/them)');
+    expect(quillTurn).toContain('your pronouns (they/them, e.g. "Quill shifts their weight"');
     expect(quillTurn).toContain('pronouns she/her');
+  });
+
+  it('sends a they/them companion\'s "he" or "his" back once, then lets the second try stand', async () => {
+    const state = fresh();
+    const model = new FakeModel({
+      'poll:quill': [{ intent: 'lead', urgency: 4 }],
+      'companion:quill': [
+        { say: 'Hey, Big Man.', act: 'Quill shifts his weight.', thought: '' },
+        { say: 'Hey, Big Man.', act: 'Quill shifts their weight.', thought: '' },
+      ],
+    });
+    await playerActs(state, scene, model, 'I wait.');
+    expect(state.transcript.find((e) => e.kind === 'companion' && e.id === 'quill')).toMatchObject({ act: 'Quill shifts their weight.' });
+    expect(model.seen('companion', 'quill')[1]).toContain('must use they/them');
+
+    const stubborn = fresh();
+    const again = new FakeModel({
+      'poll:quill': [{ intent: 'lead', urgency: 4 }],
+      'companion:quill': [{ say: 'Hey.', act: 'Quill hands Steven his sword.', thought: '' }, { say: 'Hey.', act: 'Quill hands Steven his sword.', thought: '' }],
+    });
+    await playerActs(stubborn, scene, again, 'I wait.');
+    expect(stubborn.transcript.find((e) => e.kind === 'companion' && e.id === 'quill')).toMatchObject({ act: 'Quill hands Steven his sword.' });
   });
 
   it('never shows a companion the DM\'s secrets, even once unlocked', async () => {

@@ -29,11 +29,24 @@ Games save automatically to the `saves/` folder (also git-ignored), and the page
 Other commands:
 
 ```sh
-npm test         # rules engine and DM loop tests (the DM loop uses a scripted fake model, so tests never call Groq)
+npm test         # rules engine and DM loop tests (the DM loop uses a scripted fake model, so tests never call Groq or Claude)
 npm run sandbox  # just the rules sandbox page, no server or key needed
 ```
 
 The **Rules sandbox** tab lets you pick a fight and a seed, then step through it turn by turn with every roll in the event log.
+
+### Using Claude, with Groq as a backup
+
+Add an Anthropic API key to `.env` next to your Groq key:
+
+```
+ANTHROPIC_API_KEY=your-anthropic-key
+GROQ_API_KEY=your-groq-key
+```
+
+Claude then runs the game: Sonnet 5.5 as the DM, and Haiku 5.5 for the companions and bookkeeping. Change the models with `CLAUDE_DM_MODEL`, `CLAUDE_COMPANION_MODEL` and `CLAUDE_HELPER_MODEL`, and how hard they think with `CLAUDE_EFFORT` (low by default).
+
+If a Claude call fails for any reason, such as an outage, a rate limit, running out of credits, or Claude declining a request, that call goes to Groq instead. Claude then sits out for a minute before the game tries it again, and the server console says when this happens. Without a Groq key, Claude runs alone; without an Anthropic key, nothing changes.
 
 ### Using a different model
 

@@ -137,7 +137,7 @@ async function companionsReact(state: GameState, scene: Scene, model: ModelClien
   for (const { id, role } of speakers) {
     const def = companionDef(id);
     const messages = buildCompanionTurnMessages(state, scene, def, me(id), party, role, role === 'support' ? leadName : undefined);
-    const turn = await askWithRetry(model, 'companion', messages, (t) => parseTurn(t));
+    const turn = await askWithRetry(model, 'companion', messages, (t, last) => parseTurn(t, { pronouns: last ? undefined : def.pronouns }));
     if (!turn) continue; // a companion who can't answer just stays quiet this beat
     state.transcript.push({ kind: 'companion', id, name: me(id).name, say: turn.say, act: turn.act, thought: turn.thought, role });
     const cs = state.companions[id]!;
@@ -167,7 +167,8 @@ export function isFatal(e: unknown): boolean {
   return /rate limiting|\((401|403)\)/.test((e as Error).message);
 }
 
-export async function askWithRetry<T>(model: ModelClient, role: 'companion' | 'helper', messages: ChatMessage[], parse: (text: string) => T): Promise<T | null> {
+/** `last` tells the parser this is the final try, so it can let a minor slip through rather than lose the reply. */
+export async function askWithRetry<T>(model: ModelClient, role: 'companion' | 'helper', messages: ChatMessage[], parse: (text: string, last: boolean) => T): Promise<T | null> {
   const msgs = [...messages];
   for (let attempt = 0; attempt < 2; attempt++) {
     let text: string;
@@ -178,7 +179,7 @@ export async function askWithRetry<T>(model: ModelClient, role: 'companion' | 'h
       continue;
     }
     try {
-      return parse(text);
+      return parse(text, attempt === 1);
     } catch (e) {
       msgs.push({ role: 'assistant', content: text }, { role: 'user', content: `That reply broke a rule: ${(e as Error).message}. Reply again with corrected JSON only.` });
     }

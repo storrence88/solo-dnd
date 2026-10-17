@@ -119,6 +119,17 @@ describe('a party beat', () => {
     expect(dm).not.toContain('Quill is nervous');
   });
 
+  it('tells the DM and the companions everyone\'s pronouns', async () => {
+    const state = fresh();
+    const model = new FakeModel({ 'poll:quill': [{ intent: 'lead', urgency: 4 }] });
+    await playerActs(state, scene, model, 'I wait.');
+    expect(model.seen('dm')[0]).toContain('Quill (companion, id quill, pronouns they/them)');
+    expect(model.seen('dm')[0]).toContain('Brenna Ashford (companion, id brenna, pronouns she/her)');
+    const quillTurn = model.seen('companion', 'quill')[0]!;
+    expect(quillTurn).toContain('your pronouns (they/them)');
+    expect(quillTurn).toContain('pronouns she/her');
+  });
+
   it('never shows a companion the DM\'s secrets, even once unlocked', async () => {
     const state = fresh();
     const model = new FakeModel({ helper: [{ met: ['sick-child', 'corrin-knows-quill', 'ford'] }], 'poll:brenna': [{ intent: 'support', urgency: 3 }] });

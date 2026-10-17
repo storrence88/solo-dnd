@@ -1,5 +1,5 @@
 import { formatModifier, getSpell, type Combatant, type LegalAction } from '../engine';
-import type { CompanionDef } from './companions';
+import { COMPANIONS, type CompanionDef } from './companions';
 import type { ChatMessage } from './model';
 import type { Scene } from './scene';
 import type { CompanionState, Entry, GameState } from './state';
@@ -14,7 +14,7 @@ HARD RULES
 - Start combat only when someone actually attacks or a fight is clearly unavoidable.
 
 STYLE
-- Second person for the PC ("you"); companions by name. 60 to 160 words. Show, don't summarise. Give NPCs their own voice.
+- Second person for the PC ("you"); companions by name, using the pronouns listed for them. 60 to 160 words. Show, don't summarise. Give NPCs their own voice.
 - End by handing the turn back to the PC in "prompt": a short question or "What do you do?".
 
 OUTPUT
@@ -33,13 +33,19 @@ Reply with one JSON object and nothing else:
 Skills: athletics, acrobatics, sleightOfHand, stealth, arcana, history, investigation, nature, religion, animalHandling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion. Abilities: str, dex, con, int, wis, cha.
 When you ask for a check, narrate only the attempt, not the result. The check always decides whether that character gets what they were trying for: a SUCCESS goes their way and a FAILURE does not. Write "reason" from their side, e.g. "make the bandits back down", never "whether things turn violent".`;
 
+/** ", pronouns they/them" for a companion; nothing for the PC, whose pronouns the player sets by how they write. */
+function pronounsOf(id: string): string {
+  const def = COMPANIONS[id];
+  return def ? `, pronouns ${def.pronouns}` : '';
+}
+
 export function describePc(pc: Combatant): string {
   const attacks = pc.attacks.map((a) => `${a.name} ${formatModifier(a.toHit)} (${a.damage})`).join(', ');
   const spells = pc.spellcasting
     ? ` Spells: ${pc.spellcasting.spells.map((id) => getSpell(id).name).join(', ')}; slots left ${pc.spellcasting.slots.slice(1).map((n, i) => `L${i + 1} ${n}`).join(', ')}.`
     : '';
   const down = pc.status === 'ok' ? '' : ` Currently ${pc.status}.`;
-  return `${pc.name} (id ${pc.id}), ${pc.classId} ${pc.level}. HP ${pc.hp}/${pc.maxHp}, AC ${pc.ac}. Attacks: ${attacks}. Skills: ${pc.skillProficiencies.join(', ')}.${spells}${down}`;
+  return `${pc.name} (id ${pc.id}${pronounsOf(pc.id)}), ${pc.classId} ${pc.level}. HP ${pc.hp}/${pc.maxHp}, AC ${pc.ac}. Attacks: ${attacks}. Skills: ${pc.skillProficiencies.join(', ')}.${spells}${down}`;
 }
 
 function companionLine(e: Extract<Entry, { kind: 'companion' }>): string {
@@ -113,7 +119,7 @@ export function buildDmMessages(state: GameState, scene: Scene, party: Combatant
     `SCENE: ${scene.title}`,
     `SITUATION: ${scene.situation}`,
     `LOCATION: ${scene.location}`,
-    `PARTY: ${scene.pc.name} (the PC, id ${scene.pc.id})${companions.map((c) => `, ${c.name} (companion, id ${c.id})`).join('')}`,
+    `PARTY: ${scene.pc.name} (the PC, id ${scene.pc.id})${companions.map((c) => `, ${c.name} (companion, id ${c.id}${pronounsOf(c.id)})`).join('')}`,
     `PEOPLE:\n${scene.npcs.map((n) => `- ${n.name} (id ${n.id}): ${n.description} Wants: ${n.goal} Voice: ${n.voice}`).join('\n')}`,
     `ENEMIES (if it comes to a fight): ${scene.enemies.map((e) => `${e.name} (id ${e.id})`).join(', ')}`,
     `UNLOCKED SECRETS:\n${secrets.length ? secrets.map((s) => `- [${s.id}] ${s.text}`).join('\n') : '(none yet)'}`,
@@ -203,7 +209,7 @@ export function buildCompanionTurnMessages(
       content:
         `STORY (what you have seen and heard):\n${perceptionFor(def.id, state.transcript, scene)}\n\n${roleText}\n` +
         'Keep "say" and "act" under 60 words together. Update your mood and trust if something just changed them (trust moves at most 1 point per beat).\n' +
-        `Reply with JSON only: {"say": "your words, or empty", "act": "what you physically do, in third person, or empty", "thought": "one private sentence nobody else hears", "mood": "a few words", "trust": {${others.map((c) => `"${c.id}": 0-10`).join(', ')}}}`,
+        `Reply with JSON only: {"say": "your words, or empty", "act": "what you physically do, in third person using your name and your pronouns (${def.pronouns}), or empty", "thought": "one private sentence nobody else hears", "mood": "a few words", "trust": {${others.map((c) => `"${c.id}": 0-10`).join(', ')}}}`,
     },
   ];
 }

@@ -5,7 +5,8 @@ export interface ChatMessage {
 }
 
 export interface CompletionRequest {
-  role: 'dm' | 'helper';
+  /** dm: the Dungeon Master; companion: a companion's full turn; helper: small bookkeeping calls. */
+  role: 'dm' | 'companion' | 'helper';
   messages: ChatMessage[];
   /** Ask for a single JSON object back. */
   json: boolean;
@@ -22,6 +23,7 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   dmModel: string;
+  companionModel: string;
   helperModel: string;
 }
 
@@ -31,6 +33,7 @@ export function providerConfigFromEnv(env: Record<string, string | undefined>): 
     baseUrl: (env.LLM_BASE_URL ?? 'https://api.groq.com/openai/v1').replace(/\/$/, ''),
     apiKey,
     dmModel: env.DM_MODEL ?? 'openai/gpt-oss-120b',
+    companionModel: env.COMPANION_MODEL ?? env.DM_MODEL ?? 'openai/gpt-oss-120b',
     helperModel: env.HELPER_MODEL ?? 'openai/gpt-oss-20b',
   };
 }
@@ -46,13 +49,13 @@ export class OpenAICompatibleClient implements ModelClient {
   ) {}
 
   async complete(request: CompletionRequest): Promise<string> {
-    const model = request.role === 'dm' ? this.config.dmModel : this.config.helperModel;
+    const model = request.role === 'dm' ? this.config.dmModel : request.role === 'companion' ? this.config.companionModel : this.config.helperModel;
     const body: Record<string, unknown> = {
       model,
       messages: request.messages,
-      temperature: request.temperature ?? (request.role === 'dm' ? 0.9 : 0.2),
+      temperature: request.temperature ?? (request.role === 'helper' ? 0.2 : 0.9),
       // Free tiers count this reservation against tokens-per-minute, so keep it no bigger than a turn needs.
-      max_completion_tokens: request.maxTokens ?? (request.role === 'dm' ? 1024 : 512),
+      max_completion_tokens: request.maxTokens ?? (request.role === 'helper' ? 512 : 1024),
     };
     if (request.json) body.response_format = { type: 'json_object' };
     // gpt-oss models think before answering; low effort keeps turns fast.

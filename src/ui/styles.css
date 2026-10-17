@@ -85,3 +85,19 @@ button.end { border-color: var(--gold); }
 .reveal { animation: reveal 0.35s ease-out both; }
 @keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .reveal { animation-duration: 0.01s; } }
+
+/* ---- Companions ---- */
+.entry.companion { border-left: 3px solid var(--line); background: #1c1a22; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.entry.companion.brenna { border-left-color: #6fb0d6; }
+.entry.companion.brenna .who { color: #8cc6e6; }
+.entry.companion.quill { border-left-color: #c79a5a; }
+.entry.companion.quill .who { color: #e0b878; }
+.entry.companion .act { font-style: italic; color: var(--muted); }
+.entry.companion .say { font-family: Georgia, serif; font-size: 1.02rem; }
+.entry.companion .thought { width: 100%; font-size: 0.85rem; color: #9c8fb5; font-style: italic; }
+.entry.player.handoff { font-style: italic; color: var(--muted); }
+.act-buttons { display: grid; gap: 8px; align-content: start; }
+.inner { margin: -4px 0 10px; font-size: 0.8rem; color: #9c8fb5; }
+.toggle { display: flex; flex-direction: row; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 0.85rem; }
+.toggle input { width: auto; }
+h2.enemies { margin-top: 16px; }

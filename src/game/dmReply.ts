@@ -3,7 +3,7 @@ import { ModelError, parseJsonObject } from './model';
 
 export type DmAction =
   | { type: 'none' }
-  | { type: 'check'; check: Skill | Ability; dc: number; reason: string }
+  | { type: 'check'; who: string; check: Skill | Ability; dc: number; reason: string }
   | { type: 'combat'; enemies: string[]; reason: string }
   | { type: 'endScene'; outcome: string };
 
@@ -11,6 +11,8 @@ export interface DmReply {
   narration: string;
   action: DmAction;
   revealed: string[];
+  /** Companions who could not perceive this narration. */
+  hiddenFrom: string[];
   prompt: string;
 }
 
@@ -19,6 +21,9 @@ export interface DmReplyRules {
   allowCombat: boolean;
   enemyIds: string[];
   unlockedSecrets: string[];
+  /** The player character's id, and the companions who can act. */
+  pcId: string;
+  companionIds: string[];
 }
 
 /** Checks the DM's JSON against the rules. Anything off throws, and the caller asks the model to try again. */
@@ -44,7 +49,11 @@ export function parseDmReply(text: string, rules: DmReplyRules): DmReply {
       if (!known) throw new ModelError(`Unknown check "${check}"`);
       const dc = Number(a.dc);
       if (!Number.isInteger(dc) || dc < 5 || dc > 30) throw new ModelError('"dc" must be a whole number from 5 to 30');
-      action = { type: 'check', check: check as Skill | Ability, dc, reason: String(a.reason ?? '') };
+      const who = typeof a.who === 'string' && a.who.trim() ? a.who.trim() : rules.pcId;
+      if (who !== rules.pcId && !rules.companionIds.includes(who)) {
+        throw new ModelError(`"who" must be one of: ${[rules.pcId, ...rules.companionIds].join(', ')}`);
+      }
+      action = { type: 'check', who, check: check as Skill | Ability, dc, reason: String(a.reason ?? '') };
       break;
     }
     case 'combat': {
@@ -62,5 +71,6 @@ export function parseDmReply(text: string, rules: DmReplyRules): DmReply {
     default:
       throw new ModelError(`Unknown action type "${String(a.type)}"`);
   }
-  return { narration, action, revealed, prompt };
+  const hiddenFrom = Array.isArray(raw.hiddenFrom) ? raw.hiddenFrom.map(String).filter((id) => rules.companionIds.includes(id)) : [];
+  return { narration, action, revealed, hiddenFrom, prompt };
 }

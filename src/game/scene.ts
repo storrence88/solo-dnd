@@ -45,4 +45,6 @@ export interface Scene {
   /** How the scene can end, so the DM knows when to wrap up. */
   endings: string[];
   pc: CharacterSpec;
+  /** Companion ids travelling with the player character (see companions.ts). */
+  companions: string[];
 }

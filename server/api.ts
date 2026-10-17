@@ -5,7 +5,7 @@ import type { CombatAction } from '../src/engine';
 import { newGame, playerActs, playerCombatAction, viewGame } from '../src/game/game';
 import type { ModelClient, ProviderConfig } from '../src/game/model';
 import { SCENES } from '../src/game/scenes';
-import type { GameState } from '../src/game/state';
+import { migrateState, type GameState } from '../src/game/state';
 
 export interface ApiResult {
   status: number;
@@ -29,7 +29,7 @@ export class SaveStore {
 
   async load(id: string): Promise<GameState> {
     try {
-      return JSON.parse(await readFile(this.path(id), 'utf8')) as GameState;
+      return migrateState(JSON.parse(await readFile(this.path(id), 'utf8')));
     } catch (e) {
       if (e instanceof ApiError) throw e;
       throw new ApiError(404, 'No such game');
@@ -108,8 +108,9 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
       }
       if (id && sub === 'act' && method === 'POST') {
         const text = String((body as { text?: unknown } | null)?.text ?? '').slice(0, 2000);
-        if (!text.trim()) throw new ApiError(400, 'Say what you do');
-        return await turn(id, (state) => playerActs(state, sceneFor(state), model, text));
+        const handOff = (body as { handOff?: unknown } | null)?.handOff === true;
+        if (!text.trim() && !handOff) throw new ApiError(400, 'Say what you do');
+        return await turn(id, (state) => playerActs(state, sceneFor(state), model, text, { handOff }));
       }
       if (id && sub === 'combat' && method === 'POST') {
         const action = (body as { action?: CombatAction } | null)?.action;

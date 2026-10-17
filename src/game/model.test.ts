@@ -4,7 +4,7 @@ import { OpenAICompatibleClient, parseJsonObject, providerConfigFromEnv, retryAf
 describe('provider config', () => {
   it('defaults to Groq and accepts either key name', () => {
     const groq = providerConfigFromEnv({ GROQ_API_KEY: 'k1' });
-    expect(groq).toEqual({ baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'k1', dmModel: 'openai/gpt-oss-120b', helperModel: 'openai/gpt-oss-20b' });
+    expect(groq).toEqual({ baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'k1', dmModel: 'openai/gpt-oss-120b', companionModel: 'openai/gpt-oss-120b', helperModel: 'openai/gpt-oss-20b' });
     const local = providerConfigFromEnv({ LLM_API_KEY: 'k2', LLM_BASE_URL: 'http://localhost:11434/v1/', DM_MODEL: 'qwen3:32b' });
     expect(local).toMatchObject({ baseUrl: 'http://localhost:11434/v1', apiKey: 'k2', dmModel: 'qwen3:32b' });
   });

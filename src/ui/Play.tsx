@@ -8,12 +8,14 @@ interface Status {
   hasKey: boolean;
   provider: string;
   dmModel: string;
-  scenes: { id: string; title: string }[];
+  campaigns: { id: string; title: string }[];
 }
 
 interface SavedGame {
   id: string;
   title: string;
+  scene: string;
+  chapter: number;
   mode: string;
   turns: number;
 }
@@ -40,7 +42,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data;
 }
 
-/** Phase 2: play a scene with the AI Dungeon Master. Plain on purpose, so we judge the DM and not the paint. */
+/** Play an adventure with the AI Dungeon Master and companions. Plain on purpose, so we judge the story and not the paint. */
 export function Play() {
   const [status, setStatus] = useState<Status | null>(null);
   const [saves, setSaves] = useState<SavedGame[]>([]);
@@ -86,9 +88,9 @@ export function Play() {
         {status && !status.hasKey && <KeyHelp />}
         {error && <p className="error">{error}</p>}
         <section className="start">
-          {status?.scenes.map((s) => (
-            <button key={s.id} disabled={busy} onClick={() => run(() => call('POST', '/api/games', { sceneId: s.id }))}>
-              New game: {s.title}
+          {status?.campaigns.map((c) => (
+            <button key={c.id} disabled={busy} onClick={() => run(() => call('POST', '/api/games', { campaignId: c.id }))}>
+              New game: {c.title}
             </button>
           ))}
           {saves.length > 0 && (
@@ -96,7 +98,7 @@ export function Play() {
               <h2>Continue</h2>
               {saves.map((s) => (
                 <button key={s.id} disabled={busy} onClick={() => run(() => call('GET', `/api/games/${s.id}`))}>
-                  {s.title} · {s.turns} turns{s.mode === 'over' ? ' · finished' : ''}
+                  {s.title} · chapter {s.chapter}: {s.scene} · {s.turns} turns{s.mode === 'camp' ? ' · at camp' : s.mode === 'over' ? ' · scene over' : ''}
                 </button>
               ))}
             </div>
@@ -110,8 +112,11 @@ export function Play() {
     <div className="play">
       <header className="row">
         <div>
-          <h1>{game.title}</h1>
-          {status && <p className="sub">DM: {status.dmModel} via {status.provider}</p>}
+          <h1>{game.campaignTitle}</h1>
+          <p className="sub">
+            Chapter {game.chapters.length + 1}: {game.title}
+            {status && ` · DM: ${status.dmModel} via ${status.provider}`}
+          </p>
         </div>
         <button
           onClick={() => {
@@ -127,9 +132,12 @@ export function Play() {
 
       <div className="play-grid">
         <section>
+          {game.chapters.map((c, i) => (
+            <PastChapter key={i} n={i + 1} chapter={c} thoughts={thoughts} />
+          ))}
           <Transcript entries={game.transcript} delays={reveal.delays} thoughts={thoughts} />
           {game.combat && <CombatLog lines={game.combat.log} delays={reveal.liveDelays} />}
-          {busy && <p className="thinking">{game.party.length > 1 ? 'The party and the DM are thinking…' : 'The DM is thinking…'}</p>}
+          {busy && <p className="thinking">{busyText(game)}</p>}
           {error && <p className="error">{error}</p>}
           {game.mode === 'explore' && !revealing && (
             <ActBox
@@ -139,7 +147,23 @@ export function Play() {
               onHandOff={() => run(() => call('POST', `/api/games/${game.id}/act`, { handOff: true }))}
             />
           )}
-          {game.mode === 'over' && !revealing && <p className="over">The scene is over. Leave to start another.</p>}
+          {game.mode === 'over' && !revealing && !game.nextTitle && <p className="over">The adventure is over. Leave to start another.</p>}
+          {game.mode === 'over' && !revealing && game.nextTitle && (
+            <div className="act-buttons">
+              <button disabled={busy} onClick={() => run(() => call('POST', `/api/games/${game.id}/camp`))}>
+                Make camp for the night
+              </button>
+            </div>
+          )}
+          {game.mode === 'camp' && game.camp && !revealing && (
+            <CampBox
+              key={game.id}
+              busy={busy}
+              view={game}
+              onSay={(text, to) => run(() => call('POST', `/api/games/${game.id}/talk`, { text, to }))}
+              onBreak={() => run(() => call('POST', `/api/games/${game.id}/break`))}
+            />
+          )}
           {game.combat && !revealing && (
             <Actions
               busy={busy}
@@ -155,9 +179,34 @@ export function Play() {
             const nameOf = (id: string) => view.party.find((m) => m.character.id === id)?.character.name.split(' ')[0] ?? id;
             const innerLine = (id: string) => {
               const c = inner(id);
-              if (!thoughts || !c) return null;
+              if (!c) return null;
               const trust = Object.entries(c.trust).map(([who, n]) => `${nameOf(who)} ${n}`).join(', ');
-              return <p className="inner">Mood: {c.mood} · Trust: {trust}</p>;
+              return (
+                <>
+                  {c.feeling && <p className="feeling">{c.feeling}</p>}
+                  {thoughts && <p className="inner">Mood: {c.mood} · Trust: {trust}</p>}
+                  {thoughts && (c.beliefs.length > 0 || c.memories.length > 0) && (
+                    <details className="journal">
+                      <summary>What {nameOf(id)} remembers and believes</summary>
+                      {c.beliefs.length > 0 && (
+                        <ul className="beliefs">
+                          {c.beliefs.map((b, i) => (
+                            <li key={i}>{b}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {c.memories.length > 0 && (
+                        <ul className="memories">
+                          {c.memories.map((m, i) => (
+                            <li key={i}>{m}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {c.intention && <p className="inner">Means to: {c.intention}</p>}
+                    </details>
+                  )}
+                </>
+              );
             };
             const combatants = view.combat?.combatants ?? view.party.map((m) => m.character);
             const party = combatants.filter((c) => c.side === 'party');
@@ -209,12 +258,14 @@ const ENTRY_DELAY = 0.4;
  * so a round plays out instead of landing all at once. A loaded save shows instantly.
  */
 function useReveal(game: GameView | null) {
-  const r = useRef({ gameId: '', seen: 0, liveSeen: 0, delays: new Map<number, number[]>(), liveDelays: [] as number[], until: 0, before: game, last: game });
+  const r = useRef({ gameId: '', chapter: 0, seen: 0, liveSeen: 0, delays: new Map<number, number[]>(), liveDelays: [] as number[], until: 0, before: game, last: game });
   const [, rerender] = useState(0);
   const s = r.current;
   const live = game?.combat?.log ?? [];
+  // A new chapter starts a fresh transcript: reveal it from the top.
+  if (game && game.id === s.gameId && game.chapters.length !== s.chapter) Object.assign(s, { chapter: game.chapters.length, seen: 0 });
   if (game && game.id !== s.gameId) {
-    Object.assign(s, { gameId: game.id, seen: game.transcript.length, liveSeen: live.length, liveDelays: [], until: 0, before: game });
+    Object.assign(s, { gameId: game.id, chapter: game.chapters.length, seen: game.transcript.length, liveSeen: live.length, liveDelays: [], until: 0, before: game });
     s.delays.clear();
   } else if (game && (game.transcript.length > s.seen || live.length !== s.liveSeen)) {
     let t = 0;
@@ -280,8 +331,11 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
     case 'companion':
       if (!e.say && !e.act && !(thoughts && e.thought)) return null;
       return (
-        <div className={`entry companion ${e.id}`}>
-          <strong className="who">{e.name.split(' ')[0]}</strong>
+        <div className={`entry companion ${e.id} ${e.role}`}>
+          <strong className="who">
+            {e.name.split(' ')[0]}
+            {e.role === 'private' && <small> (to you, privately)</small>}
+          </strong>
           {e.act && <span className="act">{e.act}</span>}
           {e.say && <span className="say">“{e.say}”</span>}
           {thoughts && e.thought && <span className="thought">thinks: {e.thought}</span>}
@@ -295,7 +349,27 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
         </div>
       );
     case 'player':
-      return <div className={`entry player${e.handOff ? ' handoff' : ''}`}>{e.text}</div>;
+      return <div className={`entry player${e.handOff ? ' handoff' : ''}${e.hiddenFrom ? ' private' : ''}`}>{e.text}</div>;
+    case 'approval':
+      return (
+        <div className={`entry approval ${e.delta > 0 ? 'up' : 'down'}`}>
+          {e.name.split(' ')[0]} {e.delta > 0 ? 'approves' : 'disapproves'}
+          {thoughts && <small>: {e.why}</small>}
+        </div>
+      );
+    case 'campStart':
+      return <div className="entry banner camp">Night falls. The party makes camp and rests.</div>;
+    case 'chapter':
+      return <h2 className="entry chapter-title">{e.title}</h2>;
+    case 'departure':
+      return (
+        <div className={`entry departure${e.betrayed ? ' betrayed' : ''}`}>
+          <strong>
+            {e.name.split(' ')[0]} is gone.{e.betrayed ? ' Two crates of medicine are missing.' : ''}
+          </strong>
+          <p>“{e.text}”</p>
+        </div>
+      );
     case 'check':
       return (
         <div className={`entry check ${e.success ? 'success' : 'failure'}`}>
@@ -380,6 +454,81 @@ function Actions({ view, busy, onPick }: { view: GameView; busy: boolean; onPick
             {a.label}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function busyText(game: GameView): string {
+  if (game.mode === 'over') return 'The party makes camp…';
+  if (game.mode === 'camp') return 'The night goes on…';
+  return game.party.length > 1 ? 'The party and the DM are thinking…' : 'The DM is thinking…';
+}
+
+/** An earlier scene: its summary, with the full story a click away. */
+function PastChapter({ n, chapter, thoughts }: { n: number; chapter: GameView['chapters'][number]; thoughts: boolean }) {
+  return (
+    <details className="past-chapter">
+      <summary>
+        <strong>
+          Chapter {n}: {chapter.title}
+        </strong>
+        <span>{chapter.summary || chapter.outcome}</span>
+      </summary>
+      <div className="transcript">
+        {chapter.transcript.map((e, i) => (
+          <EntryBody key={i} e={e} showPrompt={false} thoughts={thoughts} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/** At camp: talk privately with a companion, or break camp and move on. */
+function CampBox({ view, busy, onSay, onBreak }: { view: GameView; busy: boolean; onSay: (text: string, to: string) => Promise<boolean>; onBreak: () => void }) {
+  const ids = view.camp?.companions ?? [];
+  const [to, setTo] = useState(view.camp?.approacher ?? ids[0] ?? '');
+  const [text, setText] = useState('');
+  const nameOf = (id: string) => view.party.find((m) => m.character.id === id)?.character.name.split(' ')[0] ?? id;
+  const send = async () => {
+    if (!text.trim() || busy || !to) return;
+    if (await onSay(text, to)) setText('');
+  };
+  return (
+    <div className="act camp-box">
+      {ids.length > 0 && (
+        <>
+          <div className="talk-to">
+            Talk privately with:
+            {ids.map((id) => (
+              <button key={id} className={id === to ? 'chosen' : ''} disabled={busy} onClick={() => setTo(id)}>
+                {nameOf(id)}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={text}
+            placeholder={`What do you say to ${nameOf(to)}? (Enter to send)`}
+            rows={2}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+        </>
+      )}
+      <div className="act-buttons">
+        {ids.length > 0 && (
+          <button onClick={send} disabled={busy || !text.trim()}>
+            Say it
+          </button>
+        )}
+        <button onClick={onBreak} disabled={busy} title="Sleep, then set out in the morning">
+          Break camp: on to {view.nextTitle}
+        </button>
       </div>
     </div>
   );

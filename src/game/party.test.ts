@@ -1,64 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { legalActions } from '../engine';
 import { newGame, playerActs, playerCombatAction, replayCombat, viewGame } from './game';
-import type { CompletionRequest, ModelClient } from './model';
 import { perceptionFor } from './prompts';
+import { FakeModel, narrate, type Reply } from './testing/fakeModel';
 import { GREYFORD } from './scenes/greyford';
 import { chooseSpeakers, type Poll } from './spotlight';
 import { migrateState, type GameState } from './state';
-
-type CallKind = 'dm' | 'helper' | 'poll' | 'companion' | 'combat';
-
-function kindOf(req: CompletionRequest): CallKind {
-  const text = req.messages.map((m) => m.content).join('\n');
-  if (req.role === 'dm') return 'dm';
-  if (req.role === 'helper') return text.includes('"intent"') ? 'poll' : 'helper';
-  return text.includes('YOUR OPTIONS RIGHT NOW') ? 'combat' : 'companion';
-}
-
-/** Which companion a poll or turn is for, read from its persona line. */
-const whoFor = (text: string) => (text.includes('Brenna Ashford, human cleric') ? 'brenna' : 'quill');
-
-type Reply = unknown | ((text: string) => unknown);
-
-/** Scripted model: replies per kind of call, optionally per companion, recording everything it was sent. */
-class FakeModel implements ModelClient {
-  requests: { kind: CallKind; who: string; text: string }[] = [];
-  constructor(private replies: Partial<Record<string, Reply[]>> = {}) {}
-  async complete(req: CompletionRequest): Promise<string> {
-    const kind = kindOf(req);
-    const text = req.messages.map((m) => m.content).join('\n');
-    const who = kind === 'dm' || kind === 'helper' ? '' : whoFor(text);
-    this.requests.push({ kind, who, text });
-    const queue = this.replies[`${kind}:${who}`] ?? this.replies[kind];
-    let next = queue?.shift();
-    if (typeof next === 'function') next = next(text);
-    if (next === undefined) next = defaults(kind, who);
-    return typeof next === 'string' ? next : JSON.stringify(next);
-  }
-  seen(kind: CallKind, who = ''): string[] {
-    return this.requests.filter((r) => r.kind === kind && (!who || r.who === who)).map((r) => r.text);
-  }
-}
-
-function defaults(kind: CallKind, who: string): unknown {
-  switch (kind) {
-    case 'dm':
-      return narrate('The river roars.');
-    case 'helper':
-      return { met: [] };
-    case 'poll':
-      return { intent: 'pass', urgency: 1 };
-    case 'companion':
-      return { say: `${who} nods.`, act: '', thought: `${who} private thought`, mood: 'wary', trust: {} };
-    case 'combat':
-      return { choices: [0], say: '', thought: '' };
-  }
-}
-
-const narrate = (narration: string, action: unknown = { type: 'none' }, extra: Record<string, unknown> = {}) => ({
-  narration, action, revealed: [], prompt: 'What do you do?', ...extra,
-});
 
 const scene = GREYFORD;
 const fresh = (seed = 42): GameState => newGame(scene, 'party', seed);
@@ -161,14 +108,31 @@ describe('a party beat', () => {
     expect(perceptionFor('brenna', state.transcript, scene)).toContain('too low for anyone');
   });
 
-  it('moves trust by at most one point a beat', async () => {
+  it('lets every companion judge the PC\'s choice, moving trust a point and logging why', async () => {
     const state = fresh();
     const model = new FakeModel({
-      'poll:quill': [{ intent: 'lead', urgency: 5 }],
-      'companion:quill': [{ say: 'Fine.', act: '', thought: 'I hate this.', mood: 'sour', trust: { steven: 0, brenna: 10 } }],
+      'poll:brenna': [{ intent: 'pass', urgency: 1, approve: -1, because: 'he threatened a hungry man' }],
+      'poll:quill': [{ intent: 'pass', urgency: 1, approve: 5, because: 'bold move' }],
     });
-    await playerActs(state, scene, model, 'Quill, hand over your coin.');
-    expect(state.companions.quill).toMatchObject({ mood: 'sour', trust: { steven: 5, brenna: 8 } });
+    await playerActs(state, scene, model, 'I tell Gorr I will gut him if he moves.');
+    expect(state.companions.brenna!.trust.steven).toBe(5);
+    expect(state.companions.quill!.trust.steven).toBe(7);
+    expect(state.companions.brenna!.approvals).toEqual([{ chapter: 0, beat: 1, delta: -1, why: 'he threatened a hungry man' }]);
+    expect(state.transcript.filter((e) => e.kind === 'approval').map((e) => e.kind === 'approval' && `${e.id}${e.delta}`)).toEqual(['brenna-1', 'quill1']);
+    // Nobody in the story hears an approval.
+    await playerActs(state, scene, model, 'Well?');
+    for (const text of [...model.seen('dm'), ...model.seen('poll'), ...model.seen('companion')]) expect(text).not.toContain('hungry man');
+  });
+
+  it('ignores approvals without a reason, and holding back is not judged', async () => {
+    const state = fresh();
+    const model = new FakeModel({
+      'poll:brenna': [{ intent: 'pass', urgency: 1, approve: 1, because: '' }, { intent: 'lead', urgency: 5, approve: -1, because: 'coward' }],
+    });
+    await playerActs(state, scene, model, 'I wave.');
+    await playerActs(state, scene, model, '', { handOff: true });
+    expect(state.companions.brenna!.trust.steven).toBe(6);
+    expect(state.transcript.some((e) => e.kind === 'approval')).toBe(false);
   });
 
   it('lets a companion who cannot answer stay quiet without breaking the beat', async () => {
@@ -278,8 +242,19 @@ describe('saves', () => {
       combat: { seed: 9, enemyIds: ['vess'], actions: [{ kind: 'endTurn' }], narratedEvents: 3 },
     };
     const s = migrateState(old);
-    expect(s).toMatchObject({ version: 2, sceneId: 'greyford-solo', beat: 1, party: { steven: { hp: 20 } }, companions: {} });
+    expect(s).toMatchObject({ version: 3, campaignId: 'greyford-solo', chapter: 0, sceneId: 'greyford-solo', beat: 1, party: { steven: { hp: 20 } }, companions: {}, roster: [], history: [] });
     expect(s.combat?.actions).toEqual([{ actorId: 'steven', action: { kind: 'endTurn' } }]);
     expect(s.transcript[1]).toMatchObject({ who: 'steven', whoName: 'Steven' });
+  });
+
+  it('upgrades a party save from Phase 3 with empty memories', () => {
+    const v2 = { ...fresh(), version: 2, companions: { brenna: { mood: 'calm', trust: { steven: 7 }, lastLed: 2 }, quill: { mood: 'jumpy', trust: { steven: 4 }, lastLed: -1 } } } as Record<string, unknown>;
+    delete v2.campaignId;
+    delete v2.roster;
+    delete v2.history;
+    delete v2.chapter;
+    const s = migrateState(v2);
+    expect(s).toMatchObject({ version: 3, campaignId: 'road', chapter: 0, roster: ['brenna', 'quill'], history: [] });
+    expect(s.companions.brenna).toMatchObject({ mood: 'calm', trust: { steven: 7 }, lastLed: 2, memories: [], beliefs: [], approvals: [] });
   });
 });

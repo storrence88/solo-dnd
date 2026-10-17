@@ -6,7 +6,7 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 3 of the plan: companions. You play the Greyford Bridge scene with two AI companions, Brenna (a cleric) and Quill (a rogue), and an AI Dungeon Master. A solo version of the scene is still there. Memory across sessions and relationships come in Phase 4.
+Phase 4 of the plan: memory and relationships. **The Road to Hollin's Rest** runs Greyford Bridge, a night at camp, and then Fever at Hollin's Rest, with two AI companions, Brenna (a cleric) and Quill (a rogue), and an AI Dungeon Master. Companions remember earlier scenes and react to your choices. A solo version of Greyford Bridge is still there.
 
 ## Running it
 
@@ -52,7 +52,19 @@ With companions, each beat goes: you act, then the companions react, then the DM
 
 - **Perception:** every character's view is built from the shared story. A companion sees only what it could perceive, its own private thoughts, and never the DM's secrets or the other companion's thoughts. Quill's own secret lives only in Quill's prompt.
 - **Spotlight:** after you act, each companion quickly says whether it wants to lead, support or pass, and how urgently. The code adds to that: naming a companion hands them the lead, moments touching their interests (Brenna: the sick, healing, faith; Quill: locks, coin, lies, Corrin) pull them in, and a companion who hasn't led in a while gets a nudge. One companion leads and the other reacts in a line. **Let the party act** holds you back so a companion takes the lead.
-- **Inner state:** each companion keeps a mood and a 0-10 trust score toward each party member, which moves at most one point a beat. Tick **Peek at companions' thoughts** to see it, along with their private thoughts.
+- **Approval:** after you act, every companion also judges your choice by their own values. A reaction moves their trust in you (0-10) by one point and is logged with its reason. You see "Brenna approves" in the story; the reason shows when you tick **Peek at companions' thoughts**, along with moods, trust and private thoughts.
+
+## Between scenes
+
+When a scene ends you can **make camp**:
+
+- The DM writes a short factual summary of the scene. Later scenes are told to stay consistent with it, and it shows as a collapsible chapter above the story.
+- The party takes a long rest (HP, spell slots and abilities come back).
+- Each companion reflects: they write 2 to 5 memories of the day in their own words, rewrite their beliefs, and settle how they feel about you (shown on their party card). From then on, the memories that matter most for the moment go into their prompts.
+- Brenna and Quill talk by the fire, and one of them comes to talk to you privately. You can talk back to either of them; the other doesn't hear.
+- **Break camp** turns the night's talk into memories and opens the next scene.
+
+Big moves are earned. A companion whose trust in you is 3 or lower, with at least three logged grievances, confronts you at camp; that is the warning. If their trust is still 1 or lower when you break camp, they may leave in the night and leave a note saying why. Quill may instead take two crates of medicine with them. A companion who trusts you 8 or more may confide in you instead.
 
 - You type what your character does. A small helper model checks whether you have met the trigger for any of the scene's hidden secrets; the DM is only ever shown secrets that have been unlocked.
 - The DM replies with JSON: narration, a question handing the turn back, and one action (nothing, ask for a check, start combat, or end the scene). Replies that break a rule, such as revealing a locked secret or adding an enemy who isn't in the scene, are sent back once for a fix.
@@ -79,7 +91,8 @@ With companions, each beat goes: you act, then the companions react, then the DM
 ```
 src/engine/   rules engine (no UI or AI code)
   data/       classes, equipment, spells, monsters, pregens
-src/game/     the DM loop: model client, prompts, reply validation, game state, scenes
+src/game/     the DM loop: model client, prompts, reply validation, game state, companions,
+              camp and memory, campaign and scenes
 server/       local server: holds the API key, runs the DM loop, saves games
 src/ui/       the play page and the rules sandbox
 ```

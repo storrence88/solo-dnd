@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CombatAction } from '../src/engine';
+import { breakCamp, campTalk, makeCamp } from '../src/game/camp';
+import { CAMPAIGNS } from '../src/game/campaign';
 import { newGame, playerActs, playerCombatAction, viewGame } from '../src/game/game';
 import type { ModelClient, ProviderConfig } from '../src/game/model';
 import { SCENES } from '../src/game/scenes';
@@ -83,7 +85,7 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
     try {
       const parts = path.replace(/^\/api\/?/, '').split('/').filter(Boolean);
       if (method === 'GET' && parts[0] === 'status' && parts.length === 1) {
-        return { status: 200, body: { hasKey: provider.apiKey !== '', provider: new URL(provider.baseUrl).host, dmModel: provider.dmModel, scenes: Object.values(SCENES).map((s) => ({ id: s.id, title: s.title })) } };
+        return { status: 200, body: { hasKey: provider.apiKey !== '', provider: new URL(provider.baseUrl).host, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })) } };
       }
       if (parts[0] !== 'games') throw new ApiError(404, 'Not found');
       const [, id, sub] = parts;
@@ -91,13 +93,16 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
       if (!id) {
         if (method === 'GET') {
           const games = await store.list();
-          return { status: 200, body: games.map((g) => ({ id: g.id, title: SCENES[g.sceneId]?.title ?? g.sceneId, mode: g.mode, turns: g.transcript.filter((e) => e.kind === 'player').length })) };
+          return {
+            status: 200,
+            body: games.map((g) => ({ id: g.id, title: CAMPAIGNS[g.campaignId]?.title ?? g.campaignId, scene: SCENES[g.sceneId]?.title ?? g.sceneId, chapter: g.chapter + 1, mode: g.mode, turns: g.beat })),
+          };
         }
         if (method === 'POST') {
-          const sceneId = String((body as { sceneId?: unknown } | null)?.sceneId ?? 'greyford');
-          const scene = SCENES[sceneId];
-          if (!scene) throw new ApiError(400, 'Unknown scene');
-          const state = newGame(scene, randomUUID(), Math.floor(Math.random() * 2 ** 31));
+          const campaign = CAMPAIGNS[String((body as { campaignId?: unknown } | null)?.campaignId ?? 'road')];
+          const scene = campaign && SCENES[campaign.scenes[0]!];
+          if (!campaign || !scene) throw new ApiError(400, 'Unknown adventure');
+          const state = newGame(scene, randomUUID(), Math.floor(Math.random() * 2 ** 31), campaign.id);
           await store.save(state);
           return { status: 201, body: viewGame(state, scene) };
         }
@@ -116,6 +121,18 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
         const action = (body as { action?: CombatAction } | null)?.action;
         if (!action || typeof action !== 'object') throw new ApiError(400, 'Missing action');
         return await turn(id, (state) => playerCombatAction(state, sceneFor(state), model, action));
+      }
+      if (id && sub === 'camp' && method === 'POST') {
+        return await turn(id, (state) => makeCamp(state, sceneFor(state), model));
+      }
+      if (id && sub === 'talk' && method === 'POST') {
+        const text = String((body as { text?: unknown } | null)?.text ?? '').slice(0, 2000);
+        const to = String((body as { to?: unknown } | null)?.to ?? '');
+        if (!text.trim()) throw new ApiError(400, 'Say something');
+        return await turn(id, (state) => campTalk(state, sceneFor(state), model, text, to));
+      }
+      if (id && sub === 'break' && method === 'POST') {
+        return await turn(id, (state) => breakCamp(state, sceneFor(state), model));
       }
       throw new ApiError(404, 'Not found');
     } catch (e) {

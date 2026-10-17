@@ -6,7 +6,16 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 4 of the plan: memory and relationships. **The Road to Hollin's Rest** runs Greyford Bridge, a night at camp, and then Fever at Hollin's Rest, with two AI companions, Brenna (a cleric) and Quill (a rogue), and an AI Dungeon Master. Companions remember earlier scenes and react to your choices. A solo version of Greyford Bridge is still there.
+Phase 5 of the plan: the campaign layer. Type an idea and pick a tone, and the DM plans a three-act campaign and writes each chapter as you reach it. You play Steven (a fighter) with two AI companions, Brenna (a cleric) and Quill (a rogue), who remember earlier scenes and react to your choices. The hand-written **The Road to Hollin's Rest** (Greyford Bridge, a night at camp, then Fever at Hollin's Rest) and a solo Greyford Bridge are still there as quick starts.
+
+## Campaigns
+
+- **Planning.** The DM model turns your premise and tone into an outline: a region and its places, two to four factions with conflicting goals, a central threat, three acts, hidden secrets, possible endings, and a reason for each of you to be on this road. You see the title, premise and region; the rest comes out in play.
+- **Chapters.** Each morning the planner writes the next scene in the same shape as the hand-written ones (people, triggered secrets, enemies, endings) from the outline and everything that has happened. Enemies must be stat blocks from the rules engine, within an encounter budget. The narrating DM still sees only the campaign's public face and the secrets each scene unlocks.
+- **Journal.** At the end of each scene the DM records what happened and updates your quests and how each faction feels about you (hostile, wary, neutral, friendly or allied). Changes show in the story and in the journal beside the party.
+- **Acts.** When a scene meets the act's goal, the next act begins. An act aims for two or three chapters; the fourth is pushed to a climax, and a fifth moves on regardless. When the last act ends, the DM writes an epilogue.
+- **Previously on…** Opening a saved game starts with a short recap of the story so far.
+- **Companion hooks.** Brenna's and Quill's personas are the same in every campaign; why they are here, their mood at the start, and what a betrayal would look like are written per campaign.
 
 ## Running it
 
@@ -77,7 +86,7 @@ When a scene ends you can **make camp**:
 - Brenna and Quill talk by the fire, and one of them comes to talk to you privately. You can talk back to either of them; the other doesn't hear.
 - **Break camp** turns the night's talk into memories and opens the next scene.
 
-Big moves are earned. A companion whose trust in you is 3 or lower, with at least three logged grievances, confronts you at camp; that is the warning. If their trust is still 1 or lower when you break camp, they may leave in the night and leave a note saying why. Quill may instead take two crates of medicine with them. A companion who trusts you 8 or more may confide in you instead.
+Big moves are earned. A companion whose trust in you is 3 or lower, with at least three logged grievances, confronts you at camp; that is the warning. If their trust is still 1 or lower when you break camp, they may leave in the night and leave a note saying why. Quill may betray the party instead, in a way that fits the campaign (on the Road, by taking two crates of medicine). A companion who trusts you 8 or more may confide in you instead.
 
 - You type what your character does. A small helper model checks whether you have met the trigger for any of the scene's hidden secrets; the DM is only ever shown secrets that have been unlocked.
 - The DM replies with JSON: narration, a question handing the turn back, and one action (nothing, ask for a check, start combat, or end the scene). Replies that break a rule, such as revealing a locked secret or adding an enemy who isn't in the scene, are sent back once for a fix.
@@ -97,7 +106,7 @@ Big moves are earned. A companion whose trust in you is 3 or lower, with at leas
 
 - Theater of the mind: no grid, no movement or ranges. "In melee with" is tracked only for Sneak Attack.
 - No opportunity attacks, reactions, concentration, encumbrance, ammunition, rations or spell components.
-- Monster data is hand-entered from the SRD for a handful of creatures; a full SRD import comes later.
+- Monster data is hand-entered from the SRD for 17 creatures, from cultists to an ogre and a veteran, without special traits such as pack tactics or undead fortitude; a full SRD import comes later.
 
 ## Layout
 
@@ -105,7 +114,7 @@ Big moves are earned. A companion whose trust in you is 3 or lower, with at leas
 src/engine/   rules engine (no UI or AI code)
   data/       classes, equipment, spells, monsters, pregens
 src/game/     the DM loop: model client, prompts, reply validation, game state, companions,
-              camp and memory, campaign and scenes
+              camp and memory, campaigns (outline, planner, journal) and scenes
 server/       local server: holds the API key, runs the DM loop, saves games
 src/ui/       the play page and the rules sandbox
 ```

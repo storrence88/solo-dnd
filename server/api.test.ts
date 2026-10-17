@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ModelClient } from '../src/game/model';
 import { modelSetupFromEnv } from '../src/game/providers';
 import { GREYFORD } from '../src/game/scenes/greyford';
+import { FakeModel } from '../src/game/testing/fakeModel';
 import { createApi, SaveStore } from './api';
 
 const reply = (narration: string) => JSON.stringify({ narration, action: { type: 'none' }, revealed: [], prompt: 'What do you do?' });
@@ -41,6 +42,22 @@ describe('game API', () => {
     expect(failed.status).toBe(502);
     expect((failed.body as { error: string }).error).toMatch(/429/);
     expect(((await api('GET', `/api/games/${id}`, null)).body as { transcript: unknown[] }).transcript).toHaveLength(1);
+  });
+
+  it('plans a new campaign from a premise, and recaps it on return', async () => {
+    const model = new FakeModel({ recap: [{ recap: 'You came to Saltmere.' }] });
+    const { api } = await setup(model);
+    const created = await api('POST', '/api/games', { premise: 'missing salt miners', tone: 'mystery' });
+    expect(created.status).toBe(201);
+    const view = created.body as { id: string; campaignTitle: string; title: string; journal: { quests: unknown[] } };
+    expect(view).toMatchObject({ campaignTitle: 'The Brine Crown', title: 'The Salt Steps' });
+    expect(view.journal.quests).toHaveLength(1);
+    expect(JSON.stringify(view)).not.toContain('Brine Queen');
+
+    const list = (await api('GET', '/api/games', null)).body as { title: string; scene: string }[];
+    expect(list[0]).toMatchObject({ title: 'The Brine Crown', scene: 'The Salt Steps' });
+    const recap = await api('POST', `/api/games/${view.id}/recap`, null);
+    expect((recap.body as { recap: string }).recap).toBe('You came to Saltmere.');
   });
 
   it('never reports the key, and rejects odd ids', async () => {

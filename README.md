@@ -6,17 +6,51 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 1 of the plan: the rules core. There is no AI yet. A small "autopilot" plays both sides so whole fights can run and be tested.
+Phase 2 of the plan: the DM loop. You can play the Greyford Bridge scene solo with an AI Dungeon Master. Companions arrive in Phase 3.
 
 ## Running it
 
+You need Node 22 or newer and an API key from a model provider. Groq's free tier is the default.
+
+1. Create a key in the Groq console (**API Keys**, then **Create API Key**).
+2. In this folder, copy `.env.example` to a new file named `.env` and put your key in it:
+   ```
+   GROQ_API_KEY=your-key-here
+   ```
+   `.env` is git-ignored, so the key stays on your computer. Never paste it into the code or a chat.
+3. Install and start:
+   ```sh
+   npm install
+   npm run dev     # open http://localhost:5173
+   ```
+
+Games save automatically to the `saves/` folder (also git-ignored), and the page offers to continue them.
+
+Other commands:
+
 ```sh
-npm install
-npm test        # rules engine tests, including 100 seeded fights per scenario
-npm run dev     # the rules sandbox page at http://localhost:5173
+npm test         # rules engine and DM loop tests (the DM loop uses a scripted fake model, so tests never call Groq)
+npm run sandbox  # just the rules sandbox page, no server or key needed
 ```
 
-The sandbox page lets you pick a fight and a seed, then step through it turn by turn or run it to the end, with every roll in the event log.
+The **Rules sandbox** tab lets you pick a fight and a seed, then step through it turn by turn with every roll in the event log.
+
+### Using a different model
+
+Any OpenAI-compatible endpoint works. For example, to run Ollama on your own PC, set these in `.env`:
+
+```
+LLM_BASE_URL=http://localhost:11434/v1
+DM_MODEL=gpt-oss:120b
+HELPER_MODEL=gpt-oss:20b
+```
+
+## How a turn works
+
+- You type what your character does. A small helper model checks whether you have met the trigger for any of the scene's hidden secrets; the DM is only ever shown secrets that have been unlocked.
+- The DM replies with JSON: narration, a question handing the turn back, and one action (nothing, ask for a check, start combat, or end the scene). Replies that break a rule, such as revealing a locked secret or adding an enemy who isn't in the scene, are sent back once for a fix.
+- Checks are rolled by the rules engine, then the DM narrates the result it was given.
+- In combat, you choose from buttons listing only legal moves, enemies are run by the engine, and the DM narrates each round from the event log. If the enemies lose half their total HP, the survivors break and flee. If you drop, you are knocked out, not killed.
 
 ## What the engine covers
 
@@ -38,5 +72,7 @@ The sandbox page lets you pick a fight and a seed, then step through it turn by 
 ```
 src/engine/   rules engine (no UI or AI code)
   data/       classes, equipment, spells, monsters, pregens
-src/ui/       the bare-bones sandbox page
+src/game/     the DM loop: model client, prompts, reply validation, game state, scenes
+server/       local server: holds the API key, runs the DM loop, saves games
+src/ui/       the play page and the rules sandbox
 ```

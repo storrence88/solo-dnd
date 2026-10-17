@@ -11,8 +11,10 @@ export function describeEvent(e: GameEvent, nameOf: (id: string) => string): str
       return `${nameOf(e.actorId)}'s turn`;
     case 'attack': {
       const dice = e.rolls.length > 1 ? `[${e.rolls.join(', ')}] ${e.mode}` : `${e.rolls[0]}`;
+      const kept = e.mode === 'advantage' ? Math.max(...e.rolls) : e.mode === 'disadvantage' ? Math.min(...e.rolls) : e.rolls[0]!;
+      const bonus = e.total - kept;
       const outcome = e.critical ? 'CRITICAL HIT' : e.hit ? 'hit' : 'miss';
-      return `${nameOf(e.attackerId)} attacks ${nameOf(e.targetId)} with ${e.attackName}: d20 ${dice} = ${e.total} vs AC ${e.targetAc}, ${outcome}`;
+      return `${nameOf(e.attackerId)} attacks ${nameOf(e.targetId)} with ${e.attackName}: d20 ${dice} ${bonus < 0 ? '-' : '+'} ${Math.abs(bonus)} = ${e.total} vs AC ${e.targetAc}, ${outcome}`;
     }
     case 'damage':
       return `${nameOf(e.targetId)} takes ${e.amount} ${e.damageType} (${e.expr}: ${e.rolls.join(', ') || 'flat'})${e.note ? `, ${e.note}` : ''}; HP ${e.hpAfter}`;

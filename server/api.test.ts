@@ -1,0 +1,53 @@
+import { mkdtemp, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { ModelClient } from '../src/game/model';
+import { providerConfigFromEnv } from '../src/game/model';
+import { GREYFORD } from '../src/game/scenes/greyford';
+import { createApi, SaveStore } from './api';
+
+const reply = (narration: string) => JSON.stringify({ narration, action: { type: 'none' }, revealed: [], prompt: 'What do you do?' });
+
+async function setup(model: ModelClient) {
+  const dir = await mkdtemp(join(tmpdir(), 'solo-dnd-'));
+  const api = createApi({ store: new SaveStore(dir), model, provider: providerConfigFromEnv({ GROQ_API_KEY: 'shh' }) });
+  return { api, dir };
+}
+
+describe('game API', () => {
+  it('creates, plays and reloads a game from its save file', async () => {
+    const model: ModelClient = { complete: async (r) => (r.role === 'helper' ? '{"met":["sick-child"]}' : reply('Vess scowls.')) };
+    const { api, dir } = await setup(model);
+    const created = await api('POST', '/api/games', {});
+    expect(created.status).toBe(201);
+    const id = (created.body as { id: string }).id;
+
+    const played = await api('POST', `/api/games/${id}/act`, { text: 'Why do you need it?' });
+    expect(played.status).toBe(200);
+    expect(JSON.stringify(played.body)).not.toContain(GREYFORD.secrets[0]!.text);
+
+    const loaded = await api('GET', `/api/games/${id}`, null);
+    expect((loaded.body as { transcript: unknown[] }).transcript).toHaveLength(3);
+    expect(await readdir(dir)).toEqual([`${id}.json`]);
+    expect(((await api('GET', '/api/games', null)).body as unknown[]).length).toBe(1);
+  });
+
+  it('keeps the save unchanged when the model fails', async () => {
+    const model: ModelClient = { complete: async () => { throw new Error('Model call failed (429): slow down'); } };
+    const { api } = await setup(model);
+    const id = ((await api('POST', '/api/games', {})).body as { id: string }).id;
+    const failed = await api('POST', `/api/games/${id}/act`, { text: 'Hello' });
+    expect(failed.status).toBe(502);
+    expect((failed.body as { error: string }).error).toMatch(/429/);
+    expect(((await api('GET', `/api/games/${id}`, null)).body as { transcript: unknown[] }).transcript).toHaveLength(1);
+  });
+
+  it('never reports the key, and rejects odd ids', async () => {
+    const { api } = await setup({ complete: async () => reply('x') });
+    const status = await api('GET', '/api/status', null);
+    expect(status.body).toMatchObject({ hasKey: true, provider: 'api.groq.com' });
+    expect(JSON.stringify(status.body)).not.toContain('shh');
+    expect((await api('GET', '/api/games/..%2Fetc', null)).status).toBe(404);
+  });
+});

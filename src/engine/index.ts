@@ -13,3 +13,5 @@ export { MONSTERS } from './data/monsters';
 export { SPELLS } from './data/spells';
 export { WEAPONS, ARMOR } from './data/equipment';
 export * as pregens from './data/pregens';
+export * from './legal';
+export type { MonsterId } from './data/monsters';

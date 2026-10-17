@@ -8,12 +8,14 @@ import {
   legalActions,
   seededRng,
   takeTurn,
+  type AbilityScores,
   type CombatAction,
   type Combatant,
   type LegalAction,
 } from '../engine';
 import { campaignTitle, hasNextChapter, hooksFor, nextScene } from './campaign';
 import { attitudeWord, slug, type CampaignOutline } from './outline';
+import { levelled } from './progression';
 import { companionDef, type CompanionDef } from './companions';
 import { nudgeTrust, parseCombatTurn, parsePoll, parseTurn } from './companionReply';
 import { parseDmReply, type DmReply, type DmReplyRules } from './dmReply';
@@ -43,10 +45,12 @@ export function newGame(scene: Scene, id: string, seed: number, campaignId = sce
   }
   for (const cid of scene.companions) {
     const def = companionDef(cid);
-    companions[cid] = freshCompanionState(hooks[cid]?.mood ?? def.startMood, def.startTrust);
+    // Companions' starting trust in the PC is written for Steven; a custom PC inherits it.
+    const trust = Object.fromEntries(Object.entries(def.startTrust).map(([who, n]) => [who === 'steven' ? scene.pc.id : who, n]));
+    companions[cid] = freshCompanionState(hooks[cid]?.mood ?? def.startMood, trust);
   }
   const state: GameState = {
-    version: 4,
+    version: 5,
     id,
     campaignId,
     chapter: 0,
@@ -67,6 +71,8 @@ export function newGame(scene: Scene, id: string, seed: number, campaignId = sce
     actChapters: 0,
     quests: [],
     factions: [],
+    level: scene.pc.level,
+    boosts: {},
   };
   if (outline) {
     state.outline = outline;
@@ -79,7 +85,7 @@ export function newGame(scene: Scene, id: string, seed: number, campaignId = sce
 
 /** Every party member, player character first, with current HP, resources and spell slots applied. */
 export function partyMembers(state: GameState, scene: Scene, { includeDead = false } = {}): Combatant[] {
-  const specs = [scene.pc, ...state.roster.map((c) => companionDef(c).spec)];
+  const specs = [scene.pc, ...state.roster.map((c) => companionDef(c).spec)].map((spec) => levelled(state, spec));
   return specs
     .filter((spec) => includeDead || !state.party[spec.id]?.dead)
     .map((spec) => {
@@ -490,6 +496,9 @@ export interface GameView {
   journal?: JournalView;
   /** "Previously on…", when one has been written for where the story stands now. */
   recap?: string;
+  level: number;
+  /** A level-up waiting for the player to raise their abilities, with the scores they have now. */
+  levelUp?: { level: number; abilities: AbilityScores };
   camp?: { approacher?: string; companions: string[] };
   combat?: {
     combatants: Combatant[];
@@ -522,6 +531,7 @@ export function viewGame(state: GameState, scene: Scene): GameView {
     campaignTitle: campaignTitle(state),
     mode: state.mode,
     hasNext: hasNextChapter(state),
+    level: state.level,
     chapters: state.history.map((c) => ({ title: c.title, outcome: c.outcome, summary: c.summary, transcript: c.transcript })),
     transcript: state.transcript,
     pcId: scene.pc.id,
@@ -541,6 +551,7 @@ export function viewGame(state: GameState, scene: Scene): GameView {
     };
   }
   if (state.recap && state.recap.chapter === state.chapter && state.recap.beat === state.beat) view.recap = state.recap.text;
+  if (state.levelUp) view.levelUp = { level: state.levelUp.level, abilities: levelled(state, scene.pc).abilities };
   if (state.mode === 'camp') view.camp = { approacher: state.camp?.approacher, companions: livingCompanions(state) };
   if (state.mode === 'combat' && state.combat) {
     const { enc, waitingOn } = replayCombat(state, scene);

@@ -1,5 +1,5 @@
 import { buildCharacter, MONSTERS, pregens, type CharacterSpec, type MonsterId } from '../engine';
-import { BESTIARY, ENCOUNTER_BUDGET, MAX_ENEMIES, monsterCost } from './bestiary';
+import { BESTIARY, ENCOUNTER_BUDGET, encounterBudget, MAX_ENEMIES, monsterCost } from './bestiary';
 import { GENERATED } from './campaign';
 import { companionDef } from './companions';
 import { askWithRetry, newGame } from './game';
@@ -9,9 +9,18 @@ import { describePc, transcriptForModel } from './prompts';
 import type { Scene, SceneEnemy } from './scene';
 import type { GameState, Quest, QuestStatus } from './state';
 
-/** Who plays a generated campaign, for now: Steven with Brenna and Quill. A character creator comes later. */
-const PC: CharacterSpec = pregens.STEVEN;
+/** Who travels with the player in a generated campaign. A companion generator may come later. */
 const COMPANION_IDS = ['brenna', 'quill'];
+
+/** The player character of a generated game: whoever the current scene was written for. */
+const pcOf = (state: GameState): CharacterSpec => state.scene?.pc ?? pregens.STEVEN;
+
+/** Who the player is playing, for the outline: their build, pronouns and the background they wrote. */
+export interface PlayerCharacter {
+  spec: CharacterSpec;
+  pronouns?: string;
+  background?: string;
+}
 
 /** After this many chapters in one act, the next scene is pushed to the act's climax. */
 const CLIMAX_AFTER = 3;
@@ -22,7 +31,7 @@ const PLANNER_ROLE = `You plan campaigns for a solo tabletop game using simplifi
 
 // ---- Outline ---------------------------------------------------------------------
 
-export function buildOutlineMessages(premise: string, tone: string): ChatMessage[] {
+export function buildOutlineMessages(premise: string, tone: string, pc: PlayerCharacter = { spec: pregens.STEVEN }): ChatMessage[] {
   const companions = COMPANION_IDS.map(companionDef);
   return [
     {
@@ -48,14 +57,16 @@ export function buildOutlineMessages(premise: string, tone: string): ChatMessage
       role: 'user',
       content:
         `PREMISE: ${premise || 'Surprise me: invent something fresh.'}\nTONE: ${tone}\n\n` +
-        `THE PC: ${describePc(buildCharacter(PC))}\n\n` +
+        `THE PC: ${describePc(buildCharacter(pc.spec), pc.pronouns)}\n` +
+        (pc.background ? `THE PLAYER'S BACKGROUND FOR THEM (weave it into the PC's hook): ${pc.background}\n` : '') +
+        '\n' +
         `THE COMPANIONS:\n${companions.map((c) => `[${c.id}] (pronouns ${c.pronouns})\n${c.persona}`).join('\n\n')}`,
     },
   ];
 }
 
-export async function generateOutline(model: ModelClient, premise: string, tone: string): Promise<CampaignOutline> {
-  const outline = await askWithRetry(model, 'dm', buildOutlineMessages(premise, tone), (t) => parseOutline(t, COMPANION_IDS));
+export async function generateOutline(model: ModelClient, premise: string, tone: string, pc?: PlayerCharacter): Promise<CampaignOutline> {
+  const outline = await askWithRetry(model, 'dm', buildOutlineMessages(premise, tone, pc), (t) => parseOutline(t, COMPANION_IDS));
   if (!outline) throw new ModelError('The DM could not plan a campaign this time. Try again.');
   return outline;
 }
@@ -85,7 +96,8 @@ export function buildScenePlanMessages(state: GameState): ChatMessage[] {
   const o = state.outline!;
   const act = o.acts[state.act]!;
   const climax = state.actChapters >= CLIMAX_AFTER;
-  const party = [PC.name, ...state.roster.filter((id) => !state.party[id]?.dead).map((id) => companionDef(id).spec.name)];
+  const budget = encounterBudget(state.level);
+  const party = [`${pcOf(state).name} (${pcOf(state).classId})`, ...state.roster.filter((id) => !state.party[id]?.dead).map((id) => companionDef(id).spec.name)];
   const departed = Object.keys(state.companions).filter((id) => !state.roster.includes(id));
   const dead = Object.keys(state.companions).filter((id) => state.party[id]?.dead);
   return [
@@ -98,7 +110,7 @@ export function buildScenePlanMessages(state: GameState): ChatMessage[] {
         '- "opening" is read to the player: second person, present tense, 60 to 120 words, setting the scene and ending on the situation, with no question. "situation" is the facts the DM always knows. "location" describes the place and anything useful in it.\n' +
         '- 2 to 5 "npcs", each with what they want and how they talk.\n' +
         '- 1 to 3 "secrets", each a hidden fact with a "trigger": what the party must do to learn it, in plain words. Draw on the campaign\'s secrets when the story is ready for them.\n' +
-        `- "enemies" are who would fight if it comes to blows, and may be empty: not every scene is a fight, and people can often be talked down. Give each a stat block from MONSTERS and a name ("Marla the Fence" can use bandit). Their total cost must be at most ${ENCOUNTER_BUDGET}, with at most ${MAX_ENEMIES} enemies.\n` +
+        `- "enemies" are who would fight if it comes to blows, and may be empty: not every scene is a fight, and people can often be talked down. Give each a stat block from MONSTERS and a name ("Marla the Fence" can use bandit). Their total cost must be at most ${budget}, with at most ${MAX_ENEMIES} enemies.\n` +
         '- 2 to 4 "endings": the ways this scene can finish, good and bad.\n' +
         `MONSTERS (id, challenge, cost, fits):\n${BESTIARY.map((b) => `- ${b.id} (CR ${b.cr}, cost ${monsterCost(b.id)}): ${b.note}`).join('\n')}\n\n` +
         'Reply with JSON only: {"title": "...", "location": "...", "opening": "...", "situation": "...", "npcs": [{"id": "short-id", "name": "...", "description": "what anyone can see", "goal": "...", "voice": "..."}], ' +
@@ -112,7 +124,7 @@ export function buildScenePlanMessages(state: GameState): ChatMessage[] {
         `EARLIER CHAPTERS:\n${state.history.map((c, i) => `${i + 1}. ${c.title}: ${c.summary}`).join('\n') || '(none)'}\n\n` +
         `QUESTS:\n${questsText(state.quests)}\n\n` +
         `FACTIONS:\n${state.factions.map((f) => `- ${f.name} (${attitudeWord(f.attitude)} toward the party): ${f.description}`).join('\n') || '(none)'}\n\n` +
-        `THE PARTY NOW: ${party.join(', ')}.` +
+        `THE PARTY NOW (level ${state.level}): ${party.join(', ')}.` +
         (departed.length ? ` No longer with them: ${departed.map((id) => companionDef(id).spec.name).join(', ')}.` : '') +
         (dead.length ? ` Dead: ${dead.map((id) => companionDef(id).spec.name).join(', ')}.` : ''),
     },
@@ -120,7 +132,7 @@ export function buildScenePlanMessages(state: GameState): ChatMessage[] {
 }
 
 /** Checks a planned scene and turns it into one the game can run. Enemies outside the bestiary or the budget are dropped. */
-export function parseScenePlan(raw: string, id: string, pc: CharacterSpec, companions: string[]): Scene {
+export function parseScenePlan(raw: string, id: string, pc: CharacterSpec, companions: string[], budgetLimit = ENCOUNTER_BUDGET): Scene {
   const o = parseJsonObject(raw) as Record<string, unknown>;
   const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
   const list = (v: unknown) => (Array.isArray(v) ? v : []) as Record<string, unknown>[];
@@ -141,7 +153,7 @@ export function parseScenePlan(raw: string, id: string, pc: CharacterSpec, compa
   if (endings.length === 0) throw new ModelError('"endings" must list how the scene can end');
 
   const reserved = new Set([pc.id, ...companions]);
-  let budget = ENCOUNTER_BUDGET;
+  let budget = budgetLimit;
   const enemies: SceneEnemy[] = [];
   for (const [i, e] of list(o.enemies).entries()) {
     const monster = String(e.monster ?? '') as MonsterId;
@@ -171,17 +183,20 @@ export function parseScenePlan(raw: string, id: string, pc: CharacterSpec, compa
 /** The planner writes the scene for the chapter that is about to start. */
 export async function planScene(state: GameState, model: ModelClient): Promise<Scene> {
   const companions = state.roster.filter((id) => !state.party[id]?.dead);
-  const scene = await askWithRetry(model, 'dm', buildScenePlanMessages(state), (t) => parseScenePlan(t, `chapter-${state.chapter + 1}`, PC, companions));
+  const scene = await askWithRetry(model, 'dm', buildScenePlanMessages(state), (t) => parseScenePlan(t, `chapter-${state.chapter + 1}`, pcOf(state), companions, encounterBudget(state.level)));
   if (!scene) throw new ModelError('The DM could not plan the next scene. Try again.');
   return scene;
 }
 
-/** A brand-new generated campaign: the outline, then its first scene. */
-export async function newCampaign(model: ModelClient, opts: { premise: string; tone: string }, id: string, seed: number): Promise<GameState> {
-  const outline = await generateOutline(model, opts.premise.trim().slice(0, 500), opts.tone);
-  const draft = newGame({ id: 'planning', title: outline.title, opening: '', situation: '', location: '', npcs: [], secrets: [], enemies: [], moraleBreak: 0.5, endings: [], pc: PC, companions: COMPANION_IDS }, id, seed, GENERATED, outline);
+/** A brand-new generated campaign: the outline, then its first scene. Without a character, the player is Steven. */
+export async function newCampaign(model: ModelClient, opts: { premise: string; tone: string; pc?: PlayerCharacter }, id: string, seed: number): Promise<GameState> {
+  const pc = opts.pc ?? { spec: pregens.STEVEN };
+  const outline = await generateOutline(model, opts.premise.trim().slice(0, 500), opts.tone, pc);
+  const draft = newGame({ id: 'planning', title: outline.title, opening: '', situation: '', location: '', npcs: [], secrets: [], enemies: [], moraleBreak: 0.5, endings: [], pc: pc.spec, companions: COMPANION_IDS }, id, seed, GENERATED, outline);
+  if (pc.pronouns) draft.pcPronouns = pc.pronouns;
   const scene = await planScene(draft, model);
   const state = newGame(scene, id, seed, GENERATED, outline);
+  if (pc.pronouns) state.pcPronouns = pc.pronouns;
   state.transcript.unshift({ kind: 'chapter', title: scene.title });
   return state;
 }

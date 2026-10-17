@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { CombatAction } from '../engine';
 import type { GameView } from '../game/game';
 import type { Entry } from '../game/state';
@@ -10,7 +10,22 @@ interface Status {
   dmModel: string;
   campaigns: { id: string; title: string }[];
   tones: string[];
+  classes: string[];
 }
+
+/** What the player fills in to make their own character. */
+interface NewCharacter {
+  name: string;
+  classId: string;
+  pronouns: string;
+  background: string;
+}
+
+/** The player character's id, so entries about them can leave their name off. */
+const PcId = createContext('steven');
+
+const ABILITY_NAMES = { str: 'Strength', dex: 'Dexterity', con: 'Constitution', int: 'Intelligence', wis: 'Wisdom', cha: 'Charisma' } as const;
+type AbilityKey = keyof typeof ABILITY_NAMES;
 
 interface SavedGame {
   id: string;
@@ -98,7 +113,12 @@ export function Play() {
         {status && !status.hasKey && <KeyHelp />}
         {error && <p className="error">{error}</p>}
         <section className="start">
-          <NewCampaign busy={busy} tones={status?.tones ?? []} onStart={(premise, tone) => run(() => call('POST', '/api/games', { premise, tone }))} />
+          <NewCampaign
+            busy={busy}
+            tones={status?.tones ?? []}
+            classes={status?.classes ?? []}
+            onStart={(premise, tone, character) => run(() => call('POST', '/api/games', { premise, tone, character }))}
+          />
           {busy && <p className="thinking">The DM is planning your campaign. This can take a minute…</p>}
           <h2>Quick start</h2>
           {status?.campaigns.map((c) => (
@@ -128,7 +148,7 @@ export function Play() {
           <h1>{game.campaignTitle}</h1>
           <p className="sub">
             {game.journal && `Act ${game.journal.act.n}: ${game.journal.act.title} · `}
-            Chapter {game.chapters.length + 1}: {game.title}
+            Chapter {game.chapters.length + 1}: {game.title} · Level {game.level}
             {status && ` · DM: ${status.dmModel} via ${status.provider}`}
           </p>
         </div>
@@ -144,6 +164,7 @@ export function Play() {
       </header>
       {status && !status.hasKey && <KeyHelp />}
 
+      <PcId.Provider value={game.pcId}>
       <div className="play-grid">
         <section>
           {game.recap && (
@@ -183,6 +204,7 @@ export function Play() {
               view={game}
               onSay={(text, to) => run(() => call('POST', `/api/games/${game.id}/talk`, { text, to }))}
               onBreak={() => run(() => call('POST', `/api/games/${game.id}/break`))}
+              onBoost={(boosts) => run(() => call('POST', `/api/games/${game.id}/levelup`, { boosts }))}
             />
           )}
           {game.combat && !revealing && (
@@ -268,6 +290,7 @@ export function Play() {
           })()}
         </aside>
       </div>
+      </PcId.Provider>
     </div>
   );
 }
@@ -351,6 +374,7 @@ function EntryView({ e, showPrompt, delays, thoughts }: { e: Entry; showPrompt: 
 }
 
 function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean; thoughts: boolean }) {
+  const pcId = useContext(PcId);
   switch (e.kind) {
     case 'companion':
       if (!e.say && !e.act && !(thoughts && e.thought)) return null;
@@ -398,7 +422,7 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
       return (
         <div className={`entry check ${e.success ? 'success' : 'failure'}`}>
           <strong>
-            {e.whoName && e.who !== 'steven' ? `${e.whoName.split(' ')[0]}: ` : ''}
+            {e.whoName && e.who !== pcId ? `${e.whoName.split(' ')[0]}: ` : ''}
             {e.label} check, DC {e.dc}
           </strong>
           <span>
@@ -497,10 +521,14 @@ function busyText(game: GameView): string {
   return game.party.length > 1 ? 'The party and the DM are thinking…' : 'The DM is thinking…';
 }
 
-/** Start a new campaign from an idea and a tone, or let the DM surprise you. */
-function NewCampaign({ busy, tones, onStart }: { busy: boolean; tones: string[]; onStart: (premise: string, tone: string) => void }) {
+/** Start a new campaign from an idea and a tone, as your own character or as Steven, or let the DM surprise you. */
+function NewCampaign({ busy, tones, classes, onStart }: { busy: boolean; tones: string[]; classes: string[]; onStart: (premise: string, tone: string, character?: NewCharacter) => void }) {
   const [premise, setPremise] = useState('');
   const [tone, setTone] = useState('heroic');
+  const [own, setOwn] = useState(false);
+  const [pc, setPc] = useState<NewCharacter>({ name: '', classId: 'fighter', pronouns: 'they/them', background: '' });
+  const ready = !own || !!pc.name.trim();
+  const start = (p: string) => onStart(p, tone, own ? pc : undefined);
   return (
     <div className="new-campaign">
       <h2>New campaign</h2>
@@ -518,11 +546,41 @@ function NewCampaign({ busy, tones, onStart }: { busy: boolean; tones: string[];
           </button>
         ))}
       </div>
+      <div className="tones">
+        <button className={own ? '' : 'chosen'} disabled={busy} onClick={() => setOwn(false)}>
+          Play as Steven
+        </button>
+        <button className={own ? 'chosen' : ''} disabled={busy} onClick={() => setOwn(true)}>
+          Make my own character
+        </button>
+      </div>
+      {own && (
+        <div className="creator">
+          <div className="creator-row">
+            <input value={pc.name} maxLength={40} placeholder="Name" disabled={busy} onChange={(e) => setPc({ ...pc, name: e.target.value })} />
+            <input value={pc.pronouns} maxLength={20} placeholder="Pronouns" disabled={busy} onChange={(e) => setPc({ ...pc, pronouns: e.target.value })} />
+          </div>
+          <div className="tones">
+            {classes.map((c) => (
+              <button key={c} className={c === pc.classId ? 'chosen' : ''} disabled={busy} onClick={() => setPc({ ...pc, classId: c })}>
+                {c}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={pc.background}
+            maxLength={300}
+            rows={2}
+            placeholder="A line or two of background (optional). The DM weaves it into the campaign."
+            onChange={(e) => setPc({ ...pc, background: e.target.value })}
+          />
+        </div>
+      )}
       <div className="act-buttons">
-        <button disabled={busy || !premise.trim()} onClick={() => onStart(premise, tone)}>
+        <button disabled={busy || !premise.trim() || !ready} onClick={() => start(premise)}>
           Plan this campaign
         </button>
-        <button disabled={busy} onClick={() => onStart('', tone)}>
+        <button disabled={busy || !ready} onClick={() => start('')}>
           Surprise me
         </button>
       </div>
@@ -607,7 +665,19 @@ function PastChapter({ n, chapter, thoughts }: { n: number; chapter: GameView['c
 }
 
 /** At camp: talk privately with a companion, or break camp and move on. */
-function CampBox({ view, busy, onSay, onBreak }: { view: GameView; busy: boolean; onSay: (text: string, to: string) => Promise<boolean>; onBreak: () => void }) {
+function CampBox({
+  view,
+  busy,
+  onSay,
+  onBreak,
+  onBoost,
+}: {
+  view: GameView;
+  busy: boolean;
+  onSay: (text: string, to: string) => Promise<boolean>;
+  onBreak: () => void;
+  onBoost: (boosts: Partial<Record<AbilityKey, number>>) => void;
+}) {
   const ids = view.camp?.companions ?? [];
   const [to, setTo] = useState(view.camp?.approacher ?? ids[0] ?? '');
   const [text, setText] = useState('');
@@ -618,6 +688,7 @@ function CampBox({ view, busy, onSay, onBreak }: { view: GameView; busy: boolean
   };
   return (
     <div className="act camp-box">
+      {view.levelUp && <LevelUp level={view.levelUp.level} abilities={view.levelUp.abilities} busy={busy} onBoost={onBoost} />}
       {ids.length > 0 && (
         <>
           <div className="talk-to">
@@ -650,6 +721,38 @@ function CampBox({ view, busy, onSay, onBreak }: { view: GameView; busy: boolean
         )}
         <button onClick={onBreak} disabled={busy} title="Sleep, then set out in the morning">
           {view.nextTitle ? `Break camp: on to ${view.nextTitle}` : 'Break camp at dawn'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** An ability score increase: +2 to one ability, or +1 to two. */
+function LevelUp({ level, abilities, busy, onBoost }: { level: number; abilities: Record<AbilityKey, number>; busy: boolean; onBoost: (boosts: Partial<Record<AbilityKey, number>>) => void }) {
+  const [picks, setPicks] = useState<Partial<Record<AbilityKey, number>>>({});
+  const spent = Object.values(picks).reduce((a, b) => a + (b ?? 0), 0);
+  const add = (k: AbilityKey) => {
+    const n = picks[k] ?? 0;
+    if (spent >= 2 || abilities[k] + n >= 20) return;
+    setPicks({ ...picks, [k]: n + 1 });
+  };
+  return (
+    <div className="level-up">
+      <strong>Level {level}! Raise your abilities: +2 to one, or +1 to two.</strong>
+      <div className="abilities">
+        {(Object.keys(ABILITY_NAMES) as AbilityKey[]).map((k) => (
+          <button key={k} className={picks[k] ? 'chosen' : ''} disabled={busy || (!picks[k] && (spent >= 2 || abilities[k] >= 20))} onClick={() => add(k)}>
+            {ABILITY_NAMES[k]} {abilities[k] + (picks[k] ?? 0)}
+            {picks[k] ? ` (+${picks[k]})` : ''}
+          </button>
+        ))}
+      </div>
+      <div className="act-buttons">
+        <button disabled={busy || spent !== 2} onClick={() => onBoost(picks)}>
+          Confirm
+        </button>
+        <button disabled={busy || spent === 0} onClick={() => setPicks({})}>
+          Reset
         </button>
       </div>
     </div>

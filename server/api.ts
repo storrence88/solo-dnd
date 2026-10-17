@@ -5,9 +5,10 @@ import type { CombatAction } from '../src/engine';
 import { breakCamp, campTalk, makeCamp } from '../src/game/camp';
 import { CAMPAIGNS, campaignTitle, currentScene } from '../src/game/campaign';
 import { newGame, playerActs, playerCombatAction, viewGame } from '../src/game/game';
-import type { ModelClient } from '../src/game/model';
+import { ModelError, type ModelClient } from '../src/game/model';
 import { TONES } from '../src/game/outline';
 import { newCampaign, writeRecap } from '../src/game/planner';
+import { buildPc, chooseBoosts, CLASS_IDS } from '../src/game/progression';
 import type { ProviderInfo } from '../src/game/providers';
 import { SCENES } from '../src/game/scenes';
 import { migrateState, type GameState } from '../src/game/state';
@@ -88,7 +89,7 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
     try {
       const parts = path.replace(/^\/api\/?/, '').split('/').filter(Boolean);
       if (method === 'GET' && parts[0] === 'status' && parts.length === 1) {
-        return { status: 200, body: { hasKey: provider.hasKey, provider: provider.provider, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })), tones: TONES } };
+        return { status: 200, body: { hasKey: provider.hasKey, provider: provider.provider, dmModel: provider.dmModel, campaigns: Object.values(CAMPAIGNS).map((c) => ({ id: c.id, title: c.title })), tones: TONES, classes: CLASS_IDS } };
       }
       if (parts[0] !== 'games') throw new ApiError(404, 'Not found');
       const [, id, sub] = parts;
@@ -102,11 +103,21 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
           };
         }
         if (method === 'POST') {
-          const b = (body ?? {}) as { campaignId?: unknown; premise?: unknown; tone?: unknown };
+          const b = (body ?? {}) as { campaignId?: unknown; premise?: unknown; tone?: unknown; character?: { name?: unknown; classId?: unknown; pronouns?: unknown; background?: unknown } };
           if (b.premise !== undefined || b.tone !== undefined) {
             // A generated campaign: the DM plans it before the first scene opens.
             const tone = TONES.includes(b.tone as (typeof TONES)[number]) ? String(b.tone) : 'heroic';
-            const state = await newCampaign(model, { premise: String(b.premise ?? '').slice(0, 500), tone }, randomUUID(), Math.floor(Math.random() * 2 ** 31));
+            const c = b.character;
+            let pc;
+            if (c) {
+              try {
+                const spec = buildPc(String(c.name ?? ''), String(c.classId ?? ''));
+                pc = { spec, pronouns: String(c.pronouns ?? '').trim().slice(0, 30) || undefined, background: String(c.background ?? '').trim().slice(0, 500) || undefined };
+              } catch (e) {
+                throw new ApiError(400, (e as Error).message);
+              }
+            }
+            const state = await newCampaign(model, { premise: String(b.premise ?? '').slice(0, 500), tone, pc }, randomUUID(), Math.floor(Math.random() * 2 ** 31));
             await store.save(state);
             return { status: 201, body: viewGame(state, sceneFor(state)) };
           }
@@ -141,6 +152,15 @@ export function createApi(opts: { store: SaveStore; model: ModelClient; provider
         const to = String((body as { to?: unknown } | null)?.to ?? '');
         if (!text.trim()) throw new ApiError(400, 'Say something');
         return await turn(id, (state) => campTalk(state, sceneFor(state), model, text, to));
+      }
+      if (id && sub === 'levelup' && method === 'POST') {
+        return await turn(id, async (state) => {
+          try {
+            chooseBoosts(state, sceneFor(state).pc, (body as { boosts?: unknown } | null)?.boosts);
+          } catch (e) {
+            throw e instanceof ModelError ? new ApiError(400, e.message) : e;
+          }
+        });
       }
       if (id && sub === 'recap' && method === 'POST') {
         return await turn(id, (state) => writeRecap(state, sceneFor(state), campaignTitle(state), model));

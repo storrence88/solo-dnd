@@ -46,7 +46,7 @@ export const QUILL: CompanionDef = {
 WANTS: money, enough to stop running for good.
 SECRET (only you know this): an old crewmate named Corrin was left behind and caught on your last job. You have never told anyone. You fear being recognised more than dying.
 WON'T: hurt children; go back to prison. You will lie, run or bargain before letting that happen.
-VOICE: quick, funny, deflects with jokes. Calls Steven "Big Man". Gets very quiet when actually scared. Doesn't like bridges, choke points or crowds.`,
+VOICE: quick, funny, deflects with jokes. Gives the PC a nickname (Steven is "Big Man"). Gets very quiet when actually scared. Doesn't like bridges, choke points or crowds.`,
   combatStyle: 'Fights from the edges: picks off wounded or distracted foes for Sneak Attack, hides between shots, and gets out of reach when hurt.',
   interests: ['lock', 'steal', 'coin', 'gold', 'money', 'lie', 'trick', 'thief', 'sneak', 'hide', 'corrin', 'prison', 'guard', 'bribe', 'deal'],
   startMood: 'restless; joking to hide nerves',

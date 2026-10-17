@@ -31,6 +31,7 @@ export const SPELLS = {
   guidingBolt: { name: 'Guiding Bolt', level: 1, castingTime: 'action', upcast: '1d6', effect: { kind: 'attack', range: 'ranged', damage: '4d6', damageType: 'radiant', marksTarget: true } },
   healingWord: { name: 'Healing Word', level: 1, castingTime: 'bonus', upcast: '1d4', effect: { kind: 'heal', dice: '1d4', range: 'ranged' } },
   magicMissile: { name: 'Magic Missile', level: 1, castingTime: 'action', upcast: 1, effect: { kind: 'darts', darts: 3, damage: '1d4+1', damageType: 'force' } },
+  fireball: { name: 'Fireball', level: 3, castingTime: 'action', upcast: '1d6', effect: { kind: 'save', save: 'dex', damage: '8d6', damageType: 'fire', halfOnSave: true, maxTargets: 4 } },
   scorchingRay: { name: 'Scorching Ray', level: 2, castingTime: 'action', upcast: 1, effect: { kind: 'rays', rays: 3, damage: '2d6', damageType: 'fire' } },
 } as const satisfies Record<string, SpellDef>;
 export type SpellId = keyof typeof SPELLS;

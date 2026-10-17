@@ -35,19 +35,27 @@ Reply with one JSON object and nothing else:
 Skills: athletics, acrobatics, sleightOfHand, stealth, arcana, history, investigation, nature, religion, animalHandling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion. Abilities: str, dex, con, int, wis, cha.
 When you ask for a check, narrate only the attempt, not the result. The check always decides whether that character gets what they were trying for: a SUCCESS goes their way and a FAILURE does not. Write "reason" from their side, e.g. "make the bandits back down", never "whether things turn violent".`;
 
-/** ", pronouns they/them" for a companion; nothing for the PC, whose pronouns the player sets by how they write. */
-function pronounsOf(id: string): string {
-  const def = COMPANIONS[id];
-  return def ? `, pronouns ${def.pronouns}` : '';
+/**
+ * A character's pronouns: a companion's from their persona, the PC's when the player set them
+ * (otherwise the player sets them by how they write).
+ */
+function pronounsFor(id: string, state?: GameState): string | undefined {
+  return COMPANIONS[id]?.pronouns ?? state?.pcPronouns;
 }
 
-export function describePc(pc: Combatant): string {
+/** ", pronouns they/them", or nothing when unknown. */
+function pronounsOf(id: string, state?: GameState): string {
+  const p = pronounsFor(id, state);
+  return p ? `, pronouns ${p}` : '';
+}
+
+export function describePc(pc: Combatant, pronouns?: string): string {
   const attacks = pc.attacks.map((a) => `${a.name} ${formatModifier(a.toHit)} (${a.damage})`).join(', ');
   const spells = pc.spellcasting
     ? ` Spells: ${pc.spellcasting.spells.map((id) => getSpell(id).name).join(', ')}; slots left ${pc.spellcasting.slots.slice(1).map((n, i) => `L${i + 1} ${n}`).join(', ')}.`
     : '';
   const down = pc.status === 'ok' ? '' : ` Currently ${pc.status}.`;
-  return `${pc.name} (id ${pc.id}${pronounsOf(pc.id)}), ${pc.classId} ${pc.level}. HP ${pc.hp}/${pc.maxHp}, AC ${pc.ac}. Attacks: ${attacks}. Skills: ${pc.skillProficiencies.join(', ')}.${spells}${down}`;
+  return `${pc.name} (id ${pc.id}${pronouns ? `, pronouns ${pronouns}` : pronounsOf(pc.id)}), ${pc.classId} ${pc.level}. HP ${pc.hp}/${pc.maxHp}, AC ${pc.ac}. Attacks: ${attacks}. Skills: ${pc.skillProficiencies.join(', ')}.${spells}${down}`;
 }
 
 function companionLine(e: Extract<Entry, { kind: 'companion' }>): string {
@@ -119,7 +127,7 @@ function factsBlock(state: GameState, scene: Scene, party: Combatant[]): string 
   const gone = scene.enemies.filter((e) => state.removedEnemies.includes(e.id));
   const dead = party.filter((c) => state.party[c.id]?.dead);
   return [
-    ...party.filter((c) => !state.party[c.id]?.dead).map((c) => `${c.id === scene.pc.id ? 'PC' : 'Companion'}: ${describePc(c)}`),
+    ...party.filter((c) => !state.party[c.id]?.dead).map((c) => `${c.id === scene.pc.id ? 'PC' : 'Companion'}: ${describePc(c, pronounsFor(c.id, state))}`),
     dead.length ? `Dead: ${dead.map((c) => c.name).join(', ')}.` : '',
     `Enemies still in the scene: exactly ${present.length}${present.length ? ` (${present.map((e) => e.name).join(', ')})` : ''}.`,
     gone.length ? `No longer in play: ${gone.map((e) => e.name).join(', ')}.` : '',
@@ -136,7 +144,7 @@ export function buildDmMessages(state: GameState, scene: Scene, party: Combatant
     `SCENE: ${scene.title}`,
     `SITUATION: ${scene.situation}`,
     `LOCATION: ${scene.location}`,
-    `PARTY: ${scene.pc.name} (the PC, id ${scene.pc.id})${companions.map((c) => `, ${c.name} (companion, id ${c.id}${pronounsOf(c.id)})`).join('')}`,
+    `PARTY: ${scene.pc.name} (the PC, id ${scene.pc.id}${pronounsOf(scene.pc.id, state)})${companions.map((c) => `, ${c.name} (companion, id ${c.id}${pronounsOf(c.id)})`).join('')}`,
     `PEOPLE:\n${scene.npcs.map((n) => `- ${n.name} (id ${n.id}): ${n.description} Wants: ${n.goal} Voice: ${n.voice}`).join('\n')}`,
     `ENEMIES (if it comes to a fight): ${scene.enemies.map((e) => `${e.name} (id ${e.id})`).join(', ')}`,
     `UNLOCKED SECRETS:\n${secrets.length ? secrets.map((s) => `- [${s.id}] ${s.text}`).join('\n') : '(none yet)'}`,
@@ -213,7 +221,7 @@ function companionSystem(state: GameState, def: CompanionDef, me: Combatant, par
     `WHO YOU ARE (pronouns ${def.pronouns}):\n${def.persona}`,
     state.hooks[def.id] ? `WHY YOU ARE ON THIS JOURNEY:\n${state.hooks[def.id]!.hook}` : '',
     `YOUR CHARACTER SHEET: ${describePc(me)}`,
-    `THE PARTY: ${others.map((c) => describePc(c)).join(' | ')}`,
+    `THE PARTY: ${others.map((c) => describePc(c, pronounsFor(c.id, state))).join(' | ')}`,
     memories.length ? `WHAT YOU REMEMBER FROM EARLIER:\n${memories.map((m) => `- ${m.text}`).join('\n')}` : '',
     cs.beliefs.length ? `WHAT YOU BELIEVE:\n${cs.beliefs.map((b) => `- ${b}`).join('\n')}` : '',
     `YOUR INNER STATE: mood: ${cs.mood}. Trust (0-10): ${others.map((c) => `${c.name} ${cs.trust[c.id] ?? 5}`).join(', ')}.${cs.intention ? ` You privately intend: ${cs.intention}` : ''}`,

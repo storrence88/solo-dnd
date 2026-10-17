@@ -1,4 +1,4 @@
-import type { CombatAction } from '../engine';
+import type { AbilityScores, CombatAction } from '../engine';
 import { hooksFor } from './campaign';
 import type { CampaignOutline, CompanionHook } from './outline';
 import type { Scene } from './scene';
@@ -140,7 +140,7 @@ export interface Recap {
 }
 
 export interface GameState {
-  version: 4;
+  version: 5;
   id: string;
   campaignId: string;
   /** Index of the current scene in the campaign. */
@@ -178,6 +178,14 @@ export interface GameState {
   quests: Quest[];
   factions: FactionStanding[];
   recap?: Recap;
+  /** The party's level. Everyone shares it; their specs say where they started. */
+  level: number;
+  /** Ability score increases earned so far, by character id. */
+  boosts: Record<string, Partial<AbilityScores>>;
+  /** A level-up whose ability increase the player hasn't chosen yet. */
+  levelUp?: { level: number };
+  /** The player character's pronouns, when the player has set them (custom characters). */
+  pcPronouns?: string;
 }
 
 /** A companion's inner state at the start of a game. */
@@ -185,7 +193,9 @@ export function freshCompanionState(mood: string, trust: Record<string, number>)
   return { mood, trust: { ...trust }, lastLed: -1, memories: [], beliefs: [], feeling: '', intention: '', approvals: [] };
 }
 
-type V4Only = 'hooks' | 'outline' | 'scene' | 'act' | 'actChapters' | 'quests' | 'factions' | 'recap';
+type V5Only = 'level' | 'boosts' | 'levelUp' | 'pcPronouns';
+type V4Only = V5Only | 'hooks' | 'outline' | 'scene' | 'act' | 'actChapters' | 'quests' | 'factions' | 'recap';
+type StateV4 = Omit<GameState, 'version' | V5Only> & { version: 4 };
 type StateV3 = Omit<GameState, 'version' | V4Only> & { version: 3 };
 
 type StateV2 = Omit<GameState, V4Only | 'version' | 'campaignId' | 'chapter' | 'history' | 'roster' | 'camp' | 'companions'> & {
@@ -195,11 +205,17 @@ type StateV2 = Omit<GameState, V4Only | 'version' | 'campaignId' | 'chapter' | '
 
 /**
  * Brings an older save up to the current shape. Version 1 saves were solo games; version 2 had no
- * memory or campaign; version 3 had only hand-written campaigns.
+ * memory or campaign; version 3 had only hand-written campaigns; version 4 had no levelling.
  */
 export function migrateState(raw: unknown): GameState {
   const s = raw as Record<string, unknown>;
-  if (s.version === 4) return raw as GameState;
+  if (s.version === 5) return raw as GameState;
+  const v4 = s.version === 4 ? (raw as StateV4) : fromV3(raw);
+  return { ...v4, version: 5, level: v4.scene?.pc.level ?? 3, boosts: {} };
+}
+
+function fromV3(raw: unknown): StateV4 {
+  const s = raw as Record<string, unknown>;
   const v3 = s.version === 3 ? (raw as StateV3) : fromV2(raw);
   return { ...v3, version: 4, hooks: hooksFor(v3.campaignId), act: 0, actChapters: v3.chapter, quests: [], factions: [] };
 }

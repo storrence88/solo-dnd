@@ -264,7 +264,7 @@ describe('saves', () => {
       combat: { seed: 9, enemyIds: ['vess'], actions: [{ kind: 'endTurn' }], narratedEvents: 3 },
     };
     const s = migrateState(old);
-    expect(s).toMatchObject({ version: 4, campaignId: 'greyford-solo', chapter: 0, sceneId: 'greyford-solo', beat: 1, party: { steven: { hp: 20 } }, companions: {}, roster: [], history: [] });
+    expect(s).toMatchObject({ version: 5, campaignId: 'greyford-solo', chapter: 0, sceneId: 'greyford-solo', beat: 1, party: { steven: { hp: 20 } }, companions: {}, roster: [], history: [] });
     expect(s.combat?.actions).toEqual([{ actorId: 'steven', action: { kind: 'endTurn' } }]);
     expect(s.transcript[1]).toMatchObject({ who: 'steven', whoName: 'Steven' });
   });
@@ -276,7 +276,7 @@ describe('saves', () => {
     delete v2.history;
     delete v2.chapter;
     const s = migrateState(v2);
-    expect(s).toMatchObject({ version: 4, campaignId: 'road', chapter: 0, roster: ['brenna', 'quill'], history: [] });
+    expect(s).toMatchObject({ version: 5, campaignId: 'road', chapter: 0, roster: ['brenna', 'quill'], history: [] });
     expect(s.companions.brenna).toMatchObject({ mood: 'calm', trust: { steven: 7 }, lastLed: 2, memories: [], beliefs: [], approvals: [] });
   });
 });

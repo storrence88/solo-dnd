@@ -6,6 +6,7 @@ import type { Entry } from '../game/state';
 import { atEnd, clampCursor, TUMBLE, endCursor, nextCursor, pendingState, unitAt, type Cursor, type Roll } from './playback';
 import { Card } from './Sandbox';
 import { useFollowStory, useTypewriter } from './flow';
+import { Illuminated } from './Initial';
 
 // three.js is big, so the dice load on their own while the page is already up.
 const DiceTray = lazy(() => import('./Dice'));
@@ -267,10 +268,9 @@ export function Play() {
           <Transcript entries={entries} cursor={playback.cursor} animateFrom={playback.animateFrom} streamed={streamed.current} thoughts={thoughts} />
           {speaking && (
             <div className="entry dm streaming">
-              <p>
-                {typed.text}
+              <Illuminated text={typed.text}>
                 <span className="ink-caret" aria-hidden />
-              </p>
+              </Illuminated>
             </div>
           )}
           <Suspense fallback={null}>
@@ -545,7 +545,7 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
     case 'dm':
       return (
         <div className="entry dm">
-          <p>{e.text}</p>
+          <Illuminated text={e.text} />
           {showPrompt && <p className="prompt">{e.prompt}</p>}
         </div>
       );

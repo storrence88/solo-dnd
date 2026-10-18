@@ -193,7 +193,26 @@ textarea, input, select { font-family: inherit; }
   line-height: 1.6;
   padding: 16px 20px;
 }
-.entry.dm p:first-child::first-letter { font-family: var(--display); font-size: 2.1em; float: left; line-height: 0.9; margin: 4px 6px 0 0; color: #7a1d22; }
+/* The illuminated initial: a red blackletter capital on a dark green tile, framed in gold, wound with vines. */
+.illuminated { position: relative; }
+.initial { float: left; position: relative; width: 5.3rem; height: 5.3rem; margin: 6px 14px 2px 0; box-shadow: 1px 2px 4px #3b2a1466; }
+.initial-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.initial-art .field { fill: #16271c; }
+.initial-art .frame { fill: none; stroke: #c9a24a; stroke-width: 2.4; }
+.initial-art .frame.thin { stroke: #8a6a2c; stroke-width: 0.8; }
+.initial-art .stem { fill: none; stroke: #5f8f4a; stroke-width: 1.3; stroke-linecap: round; }
+.initial-art .leaf path { fill: #3f7a3a; stroke: #24461f; stroke-width: 0.4; }
+.initial-art .petal { fill: #e8c450; }
+.initial-art .heart { fill: #b23a2a; }
+.initial-letter {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-family: 'UnifrakturMaguntia', var(--display); font-size: 4.3rem; line-height: 1; padding-top: 0.08em;
+  color: #b3262c;
+  -webkit-text-stroke: 1px #3a0d0f;
+  text-shadow: 0 0 1px #f3d58a, 1px 1px 0 #f3d58a88, 2px 3px 3px #000a;
+}
+.initial-lead { position: absolute; left: -0.55em; top: 0; color: #7a1d22; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .entry.dm .prompt { color: #7a1d22; }
 .entry.dm.streaming { box-shadow: inset 0 0 28px #a07c4544, 0 0 0 1px #d9ac5266, 0 6px 22px #d9ac5222; }
 .ink-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; vertical-align: -0.15em; background: #7a1d22; animation: blink 0.9s steps(2) infinite; }

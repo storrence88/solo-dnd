@@ -83,7 +83,7 @@ With companions, each beat goes: you act, then the companions react, then the DM
 - **Streaming.** The DM's narration appears as the model writes it, and each companion line shows the moment it is ready, so a slow model still feels quick. The server sends a running turn to the page over server-sent events (`/api/games/:id/live`); the saved game only changes once the whole turn has worked.
 - **One thing at a time.** New lines play out in order with a pause to read each one. In a fight every line comes on its own, hit points on the cards follow the lines shown so far, and damage or healing floats off the card.
 - **Dice.** Every d20 roll (attacks, saves, checks, death saves) tumbles as a 3D die at the foot of the story and lands on the number the rules engine rolled, with the result underneath. Advantage and disadvantage roll two dice and fade the one that doesn't count.
-- **Look.** Parchment for the DM, ink and gold for everything else, in Cinzel and EB Garamond. With reduced motion turned on in your system settings, the dice are skipped and turns play out quickly.
+- **Look.** Parchment for the DM, ink and gold for everything else, in Cinzel and EB Garamond. Each DM passage opens with an illuminated initial: a red blackletter capital on a gold-framed green tile wound with vines. With reduced motion turned on in your system settings, the dice are skipped and turns play out quickly.
 
 ## Between scenes
 

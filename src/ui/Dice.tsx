@@ -133,7 +133,6 @@ function setUpTable(canvas: HTMLCanvasElement): Table {
  */
 export default function DiceTray({ roll }: { roll: (Roll & { id: number }) | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const tray = useRef<HTMLDivElement>(null);
   const table = useRef<Table | null>(null);
   const [phase, setPhase] = useState<'hidden' | 'rolling' | 'landed'>('hidden');
   const [noWebGl, setNoWebGl] = useState(false);
@@ -160,7 +159,6 @@ export default function DiceTray({ roll }: { roll: (Roll & { id: number }) | nul
   useEffect(() => {
     if (!roll) return;
     setPhase('rolling');
-    tray.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     const t = table.current;
     let frame = 0;
     const timers = [setTimeout(() => setPhase('landed'), TUMBLE * 1000), setTimeout(() => setPhase('hidden'), (TUMBLE + LINGER) * 1000)];
@@ -203,7 +201,7 @@ export default function DiceTray({ roll }: { roll: (Roll & { id: number }) | nul
   const kept = roll?.kept ?? roll?.dice[0];
   const natural = kept === 20 ? 'nat20' : kept === 1 ? 'nat1' : '';
   return (
-    <div ref={tray} className={`dice-tray ${phase} ${roll?.outcome ?? ''} ${natural}`} aria-live="polite">
+    <div className={`dice-tray ${phase} ${roll?.outcome ?? ''} ${natural}`} aria-live="polite">
       <canvas ref={canvas} className={noWebGl ? 'gone' : undefined} />
       {noWebGl && phase !== 'hidden' && <div className="flat-die">{phase === 'landed' ? kept : '…'}</div>}
       {phase === 'landed' && roll && <div className="dice-caption">{roll.caption}</div>}

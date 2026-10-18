@@ -5,6 +5,7 @@ import type { GameView } from '../game/game';
 import type { Entry } from '../game/state';
 import { atEnd, clampCursor, TUMBLE, endCursor, nextCursor, pendingState, unitAt, type Cursor, type Roll } from './playback';
 import { Card } from './Sandbox';
+import { useFollowStory, useTypewriter } from './flow';
 
 // three.js is big, so the dice load on their own while the page is already up.
 const DiceTray = lazy(() => import('./Dice'));
@@ -105,6 +106,10 @@ export function Play() {
   const turnStart = useRef(0);
   const knownHp = useRef(new Map<string, number>());
   const fast = useReducedMotion() ?? false;
+  /** The DM narration being written: typed out smoothly however unevenly it arrives. */
+  const [speech, setSpeech] = useState('');
+  const typed = useTypewriter(speech, fast);
+  const story = useFollowStory();
 
   // Everything the story holds right now: the saved transcript, then whatever the running turn has added.
   const entries = useMemo<Entry[]>(() => {
@@ -115,7 +120,14 @@ export function Play() {
     return [...game.transcript, ...unnarrated, ...(live?.entries ?? [])];
   }, [game, live]);
   const page = game ? `${game.chapters.length + (live?.fresh ? 1 : 0)}` : '';
-  const playback = usePlayback(entries, game?.id ?? '', page, game?.pcId ?? '', (r) => setRoll({ ...r, id: Date.now() }), fast);
+  // A narration the player watched being written waits for its typing to finish before it settles into the story.
+  const stillTyping = (e: Entry) => e.kind === 'dm' && e.text === speech && !typed.caughtUp;
+  const playback = usePlayback(entries, game?.id ?? '', page, game?.pcId ?? '', (r) => setRoll({ ...r, id: Date.now() }), fast, stillTyping, typed.caughtUp);
+  const here = entries[playback.cursor.i];
+  const speaking =
+    !!speech &&
+    (atEnd(entries, playback.cursor) || (here?.kind === 'dm' && here.text === speech)) &&
+    !entries.slice(0, playback.cursor.i).some((e) => e.kind === 'dm' && e.text === speech);
   // While new lines are still appearing, the buttons wait so they don't spoil the outcome.
   const revealing = !playback.done;
   useEffect(() => {
@@ -133,10 +145,24 @@ export function Play() {
     setBusy(true);
     setError('');
     let stop = () => {};
+    story.follow();
+    setSpeech('');
     if (watching) {
       turnStart.current = entries.length;
       setLive({ fresh: false, entries: [], narration: '' });
-      stop = await listen(watching.id, (e) => setLive((l) => (l ? applyLive(l, e, streamed.current) : l)));
+      let narrating = '';
+      stop = await listen(watching.id, (e) => {
+        if (e.type === 'narration') {
+          narrating = e.text;
+          if (e.text) setSpeech(e.text);
+        } else if (e.type === 'entry' && e.entry.kind === 'dm' && narrating) {
+          // The narration being written has landed as a line of the story.
+          streamed.current.add(e.entry.text);
+          setSpeech(e.entry.text);
+          narrating = '';
+        }
+        setLive((l) => (l ? applyLive(l, e) : l));
+      });
     }
     try {
       const view = await work();
@@ -146,6 +172,7 @@ export function Play() {
       return true;
     } catch (e) {
       setLive(null);
+      setSpeech('');
       setError((e as Error).message);
       return false;
     } finally {
@@ -156,6 +183,7 @@ export function Play() {
 
   /** Opens a saved game, with a "previously on" if there is a story to recap. */
   const resume = (view: GameView) => {
+    setSpeech('');
     setGame(view);
     localStorage.setItem(LAST_GAME, view.id);
     if (!view.recap && view.mode !== 'ended' && (view.chapters.length > 0 || view.transcript.some((e) => e.kind === 'player'))) {
@@ -237,10 +265,10 @@ export function Play() {
             <PastChapter key={i} n={i + 1} chapter={c} thoughts={thoughts} />
           ))}
           <Transcript entries={entries} cursor={playback.cursor} animateFrom={playback.animateFrom} streamed={streamed.current} thoughts={thoughts} />
-          {live?.narration && atEnd(entries, playback.cursor) && (
+          {speaking && (
             <div className="entry dm streaming">
               <p>
-                {live.narration}
+                {typed.text}
                 <span className="ink-caret" aria-hidden />
               </p>
             </div>
@@ -248,7 +276,7 @@ export function Play() {
           <Suspense fallback={null}>
             <DiceTray roll={roll} />
           </Suspense>
-          {busy && !live?.narration && atEnd(entries, playback.cursor) && <p className="thinking">{busyText(game)}</p>}
+          {busy && !speaking && atEnd(entries, playback.cursor) && <p className="thinking">{busyText(game)}</p>}
           {error && <p className="error">{error}</p>}
           {game.mode === 'explore' && !revealing && (
             <ActBox
@@ -366,11 +394,9 @@ export function Play() {
 }
 
 /** A live event folded into the running turn. */
-function applyLive(l: Live, e: LiveEvent, streamed: Set<string>): Live {
+function applyLive(l: Live, e: LiveEvent): Live {
   if (e.type === 'chapter') return { fresh: true, entries: [], narration: '' };
   if (e.type === 'narration') return { ...l, narration: e.text };
-  // The narration being written has landed as a line of the story.
-  if (e.entry.kind === 'dm' && l.narration) streamed.add(e.entry.text);
   return { ...l, entries: [...l.entries, e.entry], narration: e.entry.kind === 'dm' ? '' : l.narration };
 }
 
@@ -379,7 +405,7 @@ function applyLive(l: Live, e: LiveEvent, streamed: Set<string>): Live {
  * the dice rolled before any line that has a roll. A loaded save shows at once; a new chapter plays
  * from the top.
  */
-function usePlayback(entries: Entry[], gameId: string, page: string, pcId: string, onRoll: (r: Roll) => void, fast: boolean) {
+function usePlayback(entries: Entry[], gameId: string, page: string, pcId: string, onRoll: (r: Roll) => void, fast: boolean, waitFor: (e: Entry) => boolean, waitKey: unknown) {
   const r = useRef({ gameId: '', page: '', cursor: { i: 0, line: 0 } as Cursor, shownAt: 0, hold: 0, rolled: '', rolledAt: 0, animateFrom: 0 });
   const [, tick] = useReducer((n: number) => n + 1, 0);
   const s = r.current;
@@ -391,7 +417,7 @@ function usePlayback(entries: Entry[], gameId: string, page: string, pcId: strin
   roll.current = onRoll;
 
   useEffect(() => {
-    if (atEnd(entries, s.cursor)) return;
+    if (atEnd(entries, s.cursor) || waitFor(entries[s.cursor.i]!)) return;
     const unit = unitAt(entries, s.cursor, pcId);
     const dice = unit.roll && !fast ? unit.roll : null;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -414,7 +440,7 @@ function usePlayback(entries: Entry[], gameId: string, page: string, pcId: strin
     if (s.rolled === at) rollThenShow();
     else timers.push(setTimeout(rollThenShow, Math.max(0, s.shownAt + s.hold * 1000 - Date.now())));
     return () => timers.forEach(clearTimeout);
-  }, [at, entries.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [at, entries.length, waitKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { cursor: s.cursor, done: atEnd(entries, s.cursor), animateFrom: s.animateFrom };
 }
@@ -449,10 +475,6 @@ function tableNow(view: GameView, entries: Entry[], cursor: Cursor, turnStart: n
 }
 
 function Transcript({ entries, cursor, animateFrom, streamed, thoughts }: { entries: Entry[]; cursor: Cursor; animateFrom: number; streamed: Set<string>; thoughts: boolean }) {
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [cursor.i, cursor.line]);
   const visible = entries.slice(0, cursor.i);
   const partial = entries[cursor.i];
   if (partial?.kind === 'combatLog' && cursor.line > 0) visible.push({ kind: 'combatLog', lines: partial.lines.slice(0, cursor.line) });
@@ -462,7 +484,6 @@ function Transcript({ entries, cursor, animateFrom, streamed, thoughts }: { entr
       {visible.map((e, i) => (
         <EntryView key={i} e={e} showPrompt={i === lastDm} animate={i >= animateFrom && !(e.kind === 'dm' && streamed.has(e.text))} thoughts={thoughts} />
       ))}
-      <div ref={end} />
     </div>
   );
 }

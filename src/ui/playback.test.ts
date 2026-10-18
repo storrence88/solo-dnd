@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '../game/state';
-import { clampCursor, nextCursor, pendingState, rollInLine, unitAt } from './playback';
+import { atEnd, clampCursor, endCursor, nextCursor, pendingState, rollInLine, unitAt } from './playback';
 
 describe('rolls in the combat log', () => {
   it('reads attacks, saves, checks and death saves', () => {
@@ -26,7 +26,14 @@ describe('playback', () => {
     expect(c).toEqual({ i: 1, line: 0 });
     c = nextCursor(entries, c);
     expect(unitAt(entries, c, 'steven').roll?.caption).toBe('Steven vs Gorr: 19 vs AC 13, hit');
-    expect(nextCursor(entries, { i: 1, line: 5 })).toEqual({ i: 2, line: 0 });
+    // The last fight log stays open after its last line: the next turn can add to it.
+    expect(nextCursor(entries, { i: 1, line: 5 })).toEqual({ i: 1, line: 6 });
+    expect(atEnd(entries, { i: 1, line: 6 })).toBe(true);
+    const grown: Entry[] = [entries[0]!, { kind: 'combatLog', lines: [...(entries[1] as { lines: string[] }).lines, 'Gorr attacks Steven with Club: d20 15 + 2 = 17 vs AC 18, miss'] }];
+    expect(atEnd(grown, { i: 1, line: 6 })).toBe(false);
+    expect(unitAt(grown, { i: 1, line: 6 }, 'steven').roll?.caption).toBe('Gorr vs Steven: 17 vs AC 18, miss');
+    expect(endCursor(grown)).toEqual({ i: 1, line: 7 });
+    expect(clampCursor([...grown, { kind: 'combatEnd', result: 'victory' }], { i: 1, line: 7 })).toEqual({ i: 2, line: 0 });
     expect(clampCursor(entries.slice(0, 1), { i: 1, line: 3 })).toEqual({ i: 1, line: 0 });
   });
 

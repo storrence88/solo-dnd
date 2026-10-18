@@ -90,27 +90,38 @@ export function unitAt(entries: Entry[], c: Cursor, pcId: string): Unit {
   }
 }
 
+/** Whether everything is shown. A fight log that is shown to its last line still counts as open, since a fight can add lines to it. */
 export function atEnd(entries: Entry[], c: Cursor): boolean {
-  return c.i >= entries.length;
+  if (c.i >= entries.length) return true;
+  const e = entries[c.i]!;
+  return c.i === entries.length - 1 && e.kind === 'combatLog' && c.line >= e.lines.length;
+}
+
+/** Past the end of a fight log, move on to the next entry if there is one. */
+function settle(entries: Entry[], c: Cursor): Cursor {
+  const e = entries[c.i];
+  if (e?.kind === 'combatLog' && c.line >= e.lines.length && c.i + 1 < entries.length) return { i: c.i + 1, line: 0 };
+  return c;
 }
 
 /** The cursor after showing the unit at `c`. */
 export function nextCursor(entries: Entry[], c: Cursor): Cursor {
-  const e = entries[c.i];
-  if (e?.kind === 'combatLog' && c.line + 1 < e.lines.length) return { i: c.i, line: c.line + 1 };
+  if (entries[c.i]?.kind === 'combatLog') return settle(entries, { i: c.i, line: c.line + 1 });
   return { i: c.i + 1, line: 0 };
 }
 
+/** Everything shown, keeping hold of a trailing fight log so new lines in it still play out. */
 export function endCursor(entries: Entry[]): Cursor {
-  return { i: entries.length, line: 0 };
+  const last = entries.at(-1);
+  return last?.kind === 'combatLog' ? { i: entries.length - 1, line: last.lines.length } : { i: entries.length, line: 0 };
 }
 
 /** Keeps a cursor inside the entries it points into, e.g. after a failed turn takes its live lines away. */
 export function clampCursor(entries: Entry[], c: Cursor): Cursor {
-  if (c.i > entries.length) return endCursor(entries);
-  const e = entries[c.i];
-  if (!e || e.kind !== 'combatLog' || c.line >= e.lines.length) return c.line ? { i: c.i, line: 0 } : c;
-  return c;
+  if (c.i >= entries.length) return { i: entries.length, line: 0 };
+  const e = entries[c.i]!;
+  if (e.kind !== 'combatLog') return c.line ? { i: c.i, line: 0 } : c;
+  return settle(entries, { i: c.i, line: Math.min(c.line, e.lines.length) });
 }
 
 /**

@@ -46,7 +46,10 @@ export class FakeModel implements ModelClient {
     let next = queue?.shift();
     if (typeof next === 'function') next = next(text);
     if (next === undefined) next = defaults(kind, who);
-    return typeof next === 'string' ? next : JSON.stringify(next);
+    const out = typeof next === 'string' ? next : JSON.stringify(next);
+    // Streams in two halves, like a real model would in many small pieces.
+    if (req.onText) for (const end of [0, out.length >> 1, out.length]) req.onText(out.slice(0, end));
+    return out;
   }
   seen(kind: CallKind, who = ''): string[] {
     return this.requests.filter((r) => r.kind === kind && (!who || r.who === who)).map((r) => r.text);

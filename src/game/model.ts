@@ -12,6 +12,8 @@ export interface CompletionRequest {
   json: boolean;
   temperature?: number;
   maxTokens?: number;
+  /** Streams the reply: called with all the text so far as it arrives. A retry or a fallback starts again from empty. */
+  onText?: (soFar: string) => void;
 }
 
 /** Anything that turns messages into text: Groq, Ollama, a hosted model, or a scripted fake in tests. */
@@ -60,6 +62,7 @@ export class OpenAICompatibleClient implements ModelClient {
     if (request.json) body.response_format = { type: 'json_object' };
     // gpt-oss models think before answering; low effort keeps turns fast.
     if (model.startsWith('openai/gpt-oss')) body.reasoning_effort = 'low';
+    if (request.onText) body.stream = true;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
@@ -76,11 +79,42 @@ export class OpenAICompatibleClient implements ModelClient {
       const text = await res.text().catch(() => '');
       throw new ModelError(`Model call failed (${res.status}): ${text.slice(0, 300)}`);
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const content = data.choices?.[0]?.message?.content;
+    // Some local servers ignore `stream` and answer in one piece, which is fine too.
+    const streamed = request.onText && res.headers.get('content-type')?.includes('text/event-stream');
+    const content = streamed ? await readStream(res, request.onText!) : ((await res.json()) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content;
+    if (request.onText && !streamed && typeof content === 'string') request.onText(content);
     if (typeof content !== 'string' || !content.trim()) throw new ModelError('Model returned an empty reply');
     return content;
   }
+}
+
+/** Reads an OpenAI-style server-sent event stream, reporting the text so far after each piece. */
+async function readStream(res: Response, onText: (soFar: string) => void): Promise<string> {
+  if (!res.body) throw new ModelError('Model returned no stream');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  onText('');
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const data = line.startsWith('data:') ? line.slice(5).trim() : '';
+      if (!data || data === '[DONE]') continue;
+      let piece: string | undefined;
+      try {
+        piece = (JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }).choices?.[0]?.delta?.content ?? undefined;
+      } catch {
+        continue; // a keep-alive or a provider's own note
+      }
+      if (piece) {
+        text += piece;
+        onText(text);
+      }
+    }
+  }
+  return text;
 }
 
 /** How long a 429 asks us to wait: the Retry-After header, or Groq's "try again in 4.9s" / "1m2.5s" text. */

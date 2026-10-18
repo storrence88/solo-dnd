@@ -6,7 +6,7 @@ The core rule of the design: **rules live in code, story lives in the model.** D
 
 ## Status
 
-Phase 6a of the plan: your own character and levelling up, on top of the Phase 5 campaign layer. Type an idea and pick a tone, and the DM plans a three-act campaign and writes each chapter as you reach it. You play your own character, or Steven (a fighter), with two AI companions, Brenna (a cleric) and Quill (a rogue), who remember earlier scenes and react to your choices. The hand-written **The Road to Hollin's Rest** (Greyford Bridge, a night at camp, then Fever at Hollin's Rest) and a solo Greyford Bridge are still there as quick starts.
+Phase 6b of the plan: the animated table, on top of your own character and levelling up (6a) and the Phase 5 campaign layer. Type an idea and pick a tone, and the DM plans a three-act campaign and writes each chapter as you reach it. You play your own character, or Steven (a fighter), with two AI companions, Brenna (a cleric) and Quill (a rogue), who remember earlier scenes and react to your choices. The hand-written **The Road to Hollin's Rest** (Greyford Bridge, a night at camp, then Fever at Hollin's Rest) and a solo Greyford Bridge are still there as quick starts.
 
 ## Campaigns
 
@@ -77,6 +77,13 @@ With companions, each beat goes: you act, then the companions react, then the DM
 - **Perception:** every character's view is built from the shared story. A companion sees only what it could perceive, its own private thoughts, and never the DM's secrets or the other companion's thoughts. Quill's own secret lives only in Quill's prompt.
 - **Spotlight:** after you act, each companion quickly says whether it wants to lead, support or pass, and how urgently. The code adds to that: naming a companion hands them the lead, moments touching their interests (Brenna: the sick, healing, faith; Quill: locks, coin, lies, Corrin) pull them in, and a companion who hasn't led in a while gets a nudge. One companion leads and the other reacts in a line. **Let the party act** holds you back so a companion takes the lead.
 - **Approval:** after you act, every companion also judges your choice by their own values. A reaction moves their trust in you (0-10) by one point and is logged with its reason. You see "Brenna approves" in the story; the reason shows when you tick **Peek at companions' thoughts**, along with moods, trust and private thoughts.
+
+## The table
+
+- **Streaming.** The DM's narration appears as the model writes it, and each companion line shows the moment it is ready, so a slow model still feels quick. The server sends a running turn to the page over server-sent events (`/api/games/:id/live`); the saved game only changes once the whole turn has worked.
+- **One thing at a time.** New lines play out in order with a pause to read each one. In a fight every line comes on its own, hit points on the cards follow the lines shown so far, and damage or healing floats off the card.
+- **Dice.** Every d20 roll (attacks, saves, checks, death saves) tumbles as a 3D die at the foot of the story and lands on the number the rules engine rolled, with the result underneath. Advantage and disadvantage roll two dice and fade the one that doesn't count.
+- **Look.** Parchment for the DM, ink and gold for everything else, in Cinzel and EB Garamond. Each DM passage opens with an illuminated initial: a red blackletter capital on a gold-framed green tile wound with vines. With reduced motion turned on in your system settings, the dice are skipped and turns play out quickly.
 
 ## Between scenes
 

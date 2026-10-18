@@ -28,6 +28,32 @@ describe('OpenAICompatibleClient', () => {
     expect(body).toMatchObject({ model: 'openai/gpt-oss-20b', response_format: { type: 'json_object' }, reasoning_effort: 'low', temperature: 0.2 });
   });
 
+  it('streams the reply when asked, reporting the text so far', async () => {
+    let body: Record<string, unknown> = {};
+    const events = ['{"narration":', '"The river', ' roars."}'].map((c) => `data: ${JSON.stringify({ choices: [{ delta: { content: c } }] })}\n\n`);
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      // Split mid-line, the way chunks really arrive.
+      const raw = events.join('') + ': keep-alive\n\ndata: [DONE]\n\n';
+      const parts = [raw.slice(0, 30), raw.slice(30, 95), raw.slice(95)];
+      return new Response(new ReadableStream({ start(c) { for (const p of parts) c.enqueue(new TextEncoder().encode(p)); c.close(); } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }) as unknown as typeof fetch;
+    const seen: string[] = [];
+    const client = new OpenAICompatibleClient(config, fakeFetch);
+    const out = await client.complete({ role: 'dm', messages: [], json: true, onText: (t) => seen.push(t) });
+    expect(body.stream).toBe(true);
+    expect(out).toBe('{"narration":"The river roars."}');
+    expect(seen).toEqual(['', '{"narration":', '{"narration":"The river', '{"narration":"The river roars."}']);
+  });
+
+  it('takes a whole reply from a server that ignores streaming', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: '{"narration":"Hi"}' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+    const seen: string[] = [];
+    const out = await new OpenAICompatibleClient(config, fakeFetch).complete({ role: 'dm', messages: [], json: true, onText: (t) => seen.push(t) });
+    expect(out).toBe('{"narration":"Hi"}');
+    expect(seen).toEqual(['{"narration":"Hi"}']);
+  });
+
   it('reports HTTP errors', async () => {
     const fakeFetch = (async () => new Response('bad key', { status: 401 })) as unknown as typeof fetch;
     const client = new OpenAICompatibleClient(config, fakeFetch);

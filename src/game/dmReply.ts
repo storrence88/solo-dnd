@@ -74,3 +74,34 @@ export function parseDmReply(text: string, rules: DmReplyRules): DmReply {
   const hiddenFrom = Array.isArray(raw.hiddenFrom) ? raw.hiddenFrom.map(String).filter((id) => rules.companionIds.includes(id)) : [];
   return { narration, action, revealed, hiddenFrom, prompt };
 }
+
+/**
+ * The narration of a DM reply that is still arriving, so the page can show it as it is written.
+ * Empty until the "narration" field starts; escapes are decoded, and a half-received one is held back.
+ */
+export function narrationSoFar(partial: string): string {
+  const m = /"narration"\s*:\s*"/.exec(partial);
+  if (!m) return '';
+  let out = '';
+  for (let i = m.index + m[0].length; i < partial.length; i++) {
+    const c = partial[i]!;
+    if (c === '"') break;
+    if (c !== '\\') {
+      out += c;
+      continue;
+    }
+    const next = partial[i + 1];
+    if (next === undefined) break;
+    if (next === 'u') {
+      const hex = partial.slice(i + 2, i + 6);
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) break;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 5;
+    } else {
+      out += ({ n: '\n', t: '\t', r: '', b: '', f: '' } as Record<string, string>)[next] ?? next;
+      i += 1;
+    }
+  }
+  return out;
+}
+

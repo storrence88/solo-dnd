@@ -30,24 +30,39 @@ export class ClaudeClient implements ModelClient {
     const messages: Anthropic.MessageParam[] = request.messages
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-    let response: Anthropic.Message;
+    const params = {
+      model,
+      // Room for thinking as well as the reply; the prompts already ask for short JSON.
+      max_tokens: request.maxTokens ?? (request.role === 'helper' ? 2048 : 4096),
+      // The rules and scene at the top of every prompt rarely change, so later calls read them from cache.
+      ...(system ? { system: [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }] } : {}),
+      output_config: { effort: this.config.effort },
+      messages,
+    };
+    let text = '';
+    let stopReason: string | null | undefined;
     try {
-      response = await this.client.messages.create({
-        model,
-        // Room for thinking as well as the reply; the prompts already ask for short JSON.
-        max_tokens: request.maxTokens ?? (request.role === 'helper' ? 2048 : 4096),
-        // The rules and scene at the top of every prompt rarely change, so later calls read them from cache.
-        ...(system ? { system: [{ type: 'text' as const, text: system, cache_control: { type: 'ephemeral' as const } }] } : {}),
-        output_config: { effort: this.config.effort },
-        messages,
-      });
+      if (request.onText) {
+        request.onText('');
+        for await (const event of await this.client.messages.create({ ...params, stream: true })) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            text += event.delta.text;
+            request.onText(text);
+          } else if (event.type === 'message_delta') {
+            stopReason = event.delta.stop_reason;
+          }
+        }
+      } else {
+        const response = await this.client.messages.create(params);
+        stopReason = response.stop_reason;
+        text = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+      }
     } catch (e) {
       if (e instanceof Anthropic.RateLimitError) throw new ModelError('Claude is rate limiting us (too many requests this minute). Wait a moment and try again.');
       if (e instanceof Anthropic.APIError) throw new ModelError(`Claude call failed (${e.status ?? 'network'}): ${e.message.slice(0, 300)}`);
       throw e;
     }
-    if (response.stop_reason === 'refusal') throw new ModelError('Claude declined to answer this one');
-    const text = response.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    if (stopReason === 'refusal') throw new ModelError('Claude declined to answer this one');
     if (!text.trim()) throw new ModelError('Claude returned an empty reply');
     return text;
   }

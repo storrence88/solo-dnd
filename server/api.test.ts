@@ -7,6 +7,7 @@ import { modelSetupFromEnv } from '../src/game/providers';
 import { GREYFORD } from '../src/game/scenes/greyford';
 import { FakeModel } from '../src/game/testing/fakeModel';
 import { createApi, SaveStore } from './api';
+import { LiveHub, type LiveEvent } from './live';
 
 const reply = (narration: string) => JSON.stringify({ narration, action: { type: 'none' }, revealed: [], prompt: 'What do you do?' });
 
@@ -72,6 +73,24 @@ describe('game API', () => {
     const early = await api('POST', `/api/games/${view.id}/levelup`, { boosts: { dex: 2 } });
     expect(early.status).toBe(400);
     expect((early.body as { error: string }).error).toMatch(/no level-up/);
+  });
+
+  it('shows a turn as it happens: each new line, and the narration as it is written', async () => {
+    const live = new LiveHub();
+    const dir = await mkdtemp(join(tmpdir(), 'solo-dnd-'));
+    const model = new FakeModel({ dm: [JSON.stringify({ narration: 'The river roars.', action: { type: 'none' }, revealed: [], prompt: 'What now?' })] });
+    const api = createApi({ store: new SaveStore(dir), model, provider: modelSetupFromEnv({ GROQ_API_KEY: 'shh' }).info, live });
+    const id = ((await api('POST', '/api/games', { campaignId: 'road' })).body as { id: string }).id;
+    const events: LiveEvent[] = [];
+    const stop = live.subscribe(id, (e) => events.push(e));
+    await api('POST', `/api/games/${id}/act`, { text: 'I wade in.' });
+    stop();
+    const kinds = events.map((e) => (e.type === 'entry' ? e.entry.kind : e.type));
+    expect(kinds[0]).toBe('player');
+    expect(kinds.at(-1)).toBe('dm');
+    const narration = events.filter((e) => e.type === 'narration').map((e) => (e as { text: string }).text);
+    expect(narration.at(-1)).toBe('The river roars.');
+    expect(kinds.indexOf('narration')).toBeGreaterThan(kinds.lastIndexOf('companion'));
   });
 
   it('never reports the key, and rejects odd ids', async () => {

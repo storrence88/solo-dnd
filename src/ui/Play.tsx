@@ -1,8 +1,15 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import type { CombatAction } from '../engine';
+import { motion, useReducedMotion } from 'motion/react';
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { CombatAction, Combatant } from '../engine';
 import type { GameView } from '../game/game';
 import type { Entry } from '../game/state';
+import { atEnd, clampCursor, TUMBLE, endCursor, nextCursor, pendingState, unitAt, type Cursor, type Roll } from './playback';
 import { Card } from './Sandbox';
+import { useFollowStory, useTypewriter } from './flow';
+import { Illuminated } from './Initial';
+
+// three.js is big, so the dice load on their own while the page is already up.
+const DiceTray = lazy(() => import('./Dice'));
 
 interface Status {
   hasKey: boolean;
@@ -58,7 +65,33 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data;
 }
 
-/** Play an adventure with the AI Dungeon Master and companions. Plain on purpose, so we judge the story and not the paint. */
+/** A turn as it happens, before the finished turn comes back (see server/live.ts). */
+type LiveEvent = { type: 'entry'; entry: Entry } | { type: 'narration'; text: string } | { type: 'chapter' };
+
+interface Live {
+  /** A new chapter began mid-turn, so these entries start a fresh page. */
+  fresh: boolean;
+  entries: Entry[];
+  /** The DM's narration so far, while it is being written. */
+  narration: string;
+}
+
+/** Listens to a game's running turn. Resolves once listening (or after a second, so a turn is never held up). */
+function listen(id: string, onEvent: (e: LiveEvent) => void): Promise<() => void> {
+  return new Promise((resolve) => {
+    if (typeof EventSource === 'undefined') return resolve(() => {});
+    const source = new EventSource(`/api/games/${id}/live`);
+    const stop = () => source.close();
+    const timer = setTimeout(() => resolve(stop), 1000);
+    source.onopen = () => {
+      clearTimeout(timer);
+      resolve(stop);
+    };
+    source.onmessage = (m) => onEvent(JSON.parse(m.data as string) as LiveEvent);
+  });
+}
+
+/** Play an adventure with the AI Dungeon Master and companions, at a table that plays each turn out as it happens. */
 export function Play() {
   const [status, setStatus] = useState<Status | null>(null);
   const [saves, setSaves] = useState<SavedGame[]>([]);
@@ -66,10 +99,41 @@ export function Play() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [thoughts, setThoughts] = useState(() => readFlag(SHOW_THOUGHTS));
-  const reveal = useReveal(game);
-  // While new lines are still appearing, the buttons and HP cards wait so they don't spoil the outcome.
-  const revealing = reveal.revealing;
-  const side = revealing ? reveal.before : game;
+  const [live, setLive] = useState<Live | null>(null);
+  const [roll, setRoll] = useState<(Roll & { id: number }) | null>(null);
+  /** DM lines the player already watched being written, which then appear without a second reveal. */
+  const streamed = useRef(new Set<string>());
+  /** Where this turn's new lines start, and what each card showed when the last turn finished. */
+  const turnStart = useRef(0);
+  const knownHp = useRef(new Map<string, number>());
+  const fast = useReducedMotion() ?? false;
+  /** The DM narration being written: typed out smoothly however unevenly it arrives. */
+  const [speech, setSpeech] = useState('');
+  const typed = useTypewriter(speech, fast);
+  const story = useFollowStory();
+
+  // Everything the story holds right now: the saved transcript, then whatever the running turn has added.
+  const entries = useMemo<Entry[]>(() => {
+    if (!game) return [];
+    if (live?.fresh) return live.entries;
+    // A fight's lines the DM hasn't narrated yet sit at the end until the next turn moves them into the story.
+    const unnarrated = game.combat?.log.length && !live?.entries.length ? [{ kind: 'combatLog' as const, lines: game.combat.log }] : [];
+    return [...game.transcript, ...unnarrated, ...(live?.entries ?? [])];
+  }, [game, live]);
+  const page = game ? `${game.chapters.length + (live?.fresh ? 1 : 0)}` : '';
+  // A narration the player watched being written waits for its typing to finish before it settles into the story.
+  const stillTyping = (e: Entry) => e.kind === 'dm' && e.text === speech && !typed.caughtUp;
+  const playback = usePlayback(entries, game?.id ?? '', page, game?.pcId ?? '', (r) => setRoll({ ...r, id: Date.now() }), fast, stillTyping, typed.caughtUp);
+  const here = entries[playback.cursor.i];
+  const speaking =
+    !!speech &&
+    (atEnd(entries, playback.cursor) || (here?.kind === 'dm' && here.text === speech)) &&
+    !entries.slice(0, playback.cursor.i).some((e) => e.kind === 'dm' && e.text === speech);
+  // While new lines are still appearing, the buttons wait so they don't spoil the outcome.
+  const revealing = !playback.done;
+  useEffect(() => {
+    if (!revealing && game) knownHp.current = new Map((game.combat?.combatants ?? game.party.map((m) => m.character)).map((c) => [c.name, c.hp]));
+  }, [revealing, game]);
 
   useEffect(() => {
     call<Status>('GET', '/api/status').then(setStatus, () => setError('Cannot reach the game server. Start it with "npm run dev".'));
@@ -78,28 +142,53 @@ export function Play() {
     if (last) call<GameView>('GET', `/api/games/${last}`).then(resume, () => localStorage.removeItem(LAST_GAME));
   }, []);
 
-  const run = async (work: () => Promise<GameView>): Promise<boolean> => {
+  const run = async (work: () => Promise<GameView>, watching = game): Promise<boolean> => {
     setBusy(true);
     setError('');
+    let stop = () => {};
+    story.follow();
+    setSpeech('');
+    if (watching) {
+      turnStart.current = entries.length;
+      setLive({ fresh: false, entries: [], narration: '' });
+      let narrating = '';
+      stop = await listen(watching.id, (e) => {
+        if (e.type === 'narration') {
+          narrating = e.text;
+          if (e.text) setSpeech(e.text);
+        } else if (e.type === 'entry' && e.entry.kind === 'dm' && narrating) {
+          // The narration being written has landed as a line of the story.
+          streamed.current.add(e.entry.text);
+          setSpeech(e.entry.text);
+          narrating = '';
+        }
+        setLive((l) => (l ? applyLive(l, e) : l));
+      });
+    }
     try {
       const view = await work();
+      setLive(null);
       setGame(view);
       localStorage.setItem(LAST_GAME, view.id);
       return true;
     } catch (e) {
+      setLive(null);
+      setSpeech('');
       setError((e as Error).message);
       return false;
     } finally {
+      stop();
       setBusy(false);
     }
   };
 
   /** Opens a saved game, with a "previously on" if there is a story to recap. */
   const resume = (view: GameView) => {
+    setSpeech('');
     setGame(view);
     localStorage.setItem(LAST_GAME, view.id);
     if (!view.recap && view.mode !== 'ended' && (view.chapters.length > 0 || view.transcript.some((e) => e.kind === 'player'))) {
-      void run(() => call('POST', `/api/games/${view.id}/recap`));
+      void run(() => call('POST', `/api/games/${view.id}/recap`), view);
     }
   };
 
@@ -176,9 +265,18 @@ export function Play() {
           {game.chapters.map((c, i) => (
             <PastChapter key={i} n={i + 1} chapter={c} thoughts={thoughts} />
           ))}
-          <Transcript entries={game.transcript} delays={reveal.delays} thoughts={thoughts} />
-          {game.combat && <CombatLog lines={game.combat.log} delays={reveal.liveDelays} />}
-          {busy && <p className="thinking">{busyText(game)}</p>}
+          <Transcript entries={entries} cursor={playback.cursor} animateFrom={playback.animateFrom} streamed={streamed.current} thoughts={thoughts} />
+          {speaking && (
+            <div className="entry dm streaming">
+              <Illuminated text={typed.text}>
+                <span className="ink-caret" aria-hidden />
+              </Illuminated>
+            </div>
+          )}
+          <Suspense fallback={null}>
+            <DiceTray roll={roll} />
+          </Suspense>
+          {busy && !speaking && atEnd(entries, playback.cursor) && <p className="thinking">{busyText(game)}</p>}
           {error && <p className="error">{error}</p>}
           {game.mode === 'explore' && !revealing && (
             <ActBox
@@ -217,7 +315,7 @@ export function Play() {
         </section>
         <aside>
           {(() => {
-            const view = side ?? game;
+            const view = game;
             const inner = (id: string) => view.party.find((m) => m.character.id === id)?.companion;
             const nameOf = (id: string) => view.party.find((m) => m.character.id === id)?.character.name.split(' ')[0] ?? id;
             const innerLine = (id: string) => {
@@ -251,21 +349,21 @@ export function Play() {
                 </>
               );
             };
-            const combatants = view.combat?.combatants ?? view.party.map((m) => m.character);
-            const party = combatants.filter((c) => c.side === 'party');
-            const enemies = combatants.filter((c) => c.side === 'enemy');
+            const table = tableNow(view, entries, playback.cursor, turnStart.current, knownHp.current);
+            const party = table.combatants.filter((c) => c.side === 'party');
+            const enemies = table.combatants.filter((c) => c.side === 'enemy');
             return (
               <>
-                <h2>{view.combat ? `Round ${view.combat.round}` : view.party.length > 1 ? 'Party' : 'You'}</h2>
+                <h2>{view.combat ? `Round ${table.round}` : view.party.length > 1 ? 'Party' : 'You'}</h2>
                 {party.map((c) => (
                   <div key={c.id}>
-                    <Card c={c} active={c.id === view.pcId && !!view.combat?.yourTurn && !revealing} />
+                    <Card c={c} active={c.id === view.pcId && !!view.combat?.yourTurn && !revealing} animated={!fast} />
                     {innerLine(c.id)}
                   </div>
                 ))}
                 {enemies.length > 0 && <h2 className="enemies">Enemies</h2>}
                 {enemies.map((c) => (
-                  <Card key={c.id} c={c} active={false} />
+                  <Card key={c.id} c={c} active={false} animated={!fast} />
                 ))}
                 {view.journal && <Journal journal={view.journal} />}
                 {view.party.length > 1 && (
@@ -295,81 +393,136 @@ export function Play() {
   );
 }
 
-const LINE_DELAY = 0.7;
-const ENTRY_DELAY = 0.4;
-
-/**
- * Entries that arrive after the page loads fade in one after another, combat lines one at a time,
- * so a round plays out instead of landing all at once. A loaded save shows instantly.
- */
-function useReveal(game: GameView | null) {
-  const r = useRef({ gameId: '', chapter: 0, seen: 0, liveSeen: 0, delays: new Map<number, number[]>(), liveDelays: [] as number[], until: 0, before: game, last: game });
-  const [, rerender] = useState(0);
-  const s = r.current;
-  const live = game?.combat?.log ?? [];
-  // Leaving a game forgets it, so reopening it later shows the story at once.
-  if (!game) s.gameId = '';
-  // A new chapter starts a fresh transcript: reveal it from the top.
-  if (game && game.id === s.gameId && game.chapters.length !== s.chapter) Object.assign(s, { chapter: game.chapters.length, seen: 0 });
-  if (game && game.id !== s.gameId) {
-    Object.assign(s, { gameId: game.id, chapter: game.chapters.length, seen: game.transcript.length, liveSeen: live.length, liveDelays: [], until: 0, before: game });
-    s.delays.clear();
-  } else if (game && (game.transcript.length > s.seen || live.length !== s.liveSeen)) {
-    let t = 0;
-    for (let i = s.seen; i < game.transcript.length; i++) {
-      const e = game.transcript[i]!;
-      if (e.kind === 'player') {
-        s.delays.set(i, [0]);
-      } else if (e.kind === 'combatLog') {
-        s.delays.set(i, e.lines.map((_, j) => t + j * LINE_DELAY));
-        t += e.lines.length * LINE_DELAY;
-      } else {
-        s.delays.set(i, [t]);
-        t += ENTRY_DELAY;
-      }
-    }
-    // The fight's not-yet-narrated lines (shown under the transcript) continue the same sequence.
-    if (live.length < s.liveSeen || game.transcript.length > s.seen) s.liveSeen = 0;
-    s.liveDelays = live.map((_, j) => (j < s.liveSeen ? -1 : t + (j - s.liveSeen) * LINE_DELAY));
-    t += Math.max(0, live.length - s.liveSeen) * LINE_DELAY;
-    s.liveSeen = live.length;
-    s.seen = game.transcript.length;
-    s.until = Date.now() + t * 1000;
-    s.before = s.last;
-  }
-  s.last = game;
-  const revealing = Date.now() < s.until;
-  useEffect(() => {
-    if (!revealing) return;
-    const timer = setTimeout(() => rerender((n) => n + 1), s.until - Date.now() + 20);
-    return () => clearTimeout(timer);
-  }, [s.until, revealing]);
-  return { revealing, delays: s.delays, liveDelays: s.liveDelays, before: s.before };
+/** A live event folded into the running turn. */
+function applyLive(l: Live, e: LiveEvent): Live {
+  if (e.type === 'chapter') return { fresh: true, entries: [], narration: '' };
+  if (e.type === 'narration') return { ...l, narration: e.text };
+  return { ...l, entries: [...l.entries, e.entry], narration: e.entry.kind === 'dm' ? '' : l.narration };
 }
 
-function Transcript({ entries, delays, thoughts }: { entries: Entry[]; delays: Map<number, number[]>; thoughts: boolean }) {
-  const end = useRef<HTMLDivElement>(null);
+/**
+ * Plays new lines one at a time: each entry, and each line of a fight, with a pause to read it and
+ * the dice rolled before any line that has a roll. A loaded save shows at once; a new chapter plays
+ * from the top.
+ */
+function usePlayback(entries: Entry[], gameId: string, page: string, pcId: string, onRoll: (r: Roll) => void, fast: boolean, waitFor: (e: Entry) => boolean, waitKey: unknown) {
+  const r = useRef({ gameId: '', page: '', cursor: { i: 0, line: 0 } as Cursor, shownAt: 0, hold: 0, rolled: '', rolledAt: 0, animateFrom: 0 });
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  const s = r.current;
+  if (gameId !== s.gameId) Object.assign(s, { gameId, page, cursor: endCursor(entries), animateFrom: entries.length, hold: 0 });
+  else if (page !== s.page) Object.assign(s, { page, cursor: { i: 0, line: 0 }, animateFrom: 0 });
+  s.cursor = clampCursor(entries, s.cursor);
+  const at = `${s.page}:${s.cursor.i}:${s.cursor.line}`;
+  const roll = useRef(onRoll);
+  roll.current = onRoll;
+
   useEffect(() => {
-    end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [entries.length]);
-  const lastDm = entries.findLastIndex((e) => e.kind === 'dm');
+    if (atEnd(entries, s.cursor) || waitFor(entries[s.cursor.i]!)) return;
+    const unit = unitAt(entries, s.cursor, pcId);
+    const dice = unit.roll && !fast ? unit.roll : null;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const show = () => {
+      s.cursor = nextCursor(entries, s.cursor);
+      s.shownAt = Date.now();
+      s.hold = fast ? unit.hold * 0.3 : unit.hold;
+      tick();
+    };
+    // Roll first and show the line once the die has landed; a roll already under way is not rolled again.
+    const rollThenShow = () => {
+      if (!dice) return show();
+      if (s.rolled !== at) {
+        s.rolled = at;
+        s.rolledAt = Date.now();
+        roll.current(dice);
+      }
+      timers.push(setTimeout(show, Math.max(0, s.rolledAt + (TUMBLE + 0.2) * 1000 - Date.now())));
+    };
+    if (s.rolled === at) rollThenShow();
+    else timers.push(setTimeout(rollThenShow, Math.max(0, s.shownAt + s.hold * 1000 - Date.now())));
+    return () => timers.forEach(clearTimeout);
+  }, [at, entries.length, waitKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { cursor: s.cursor, done: atEnd(entries, s.cursor), animateFrom: s.animateFrom };
+}
+
+/**
+ * The party and enemies as the player should see them right now: while a turn plays out, hit points
+ * and the round follow the lines shown so far instead of jumping to the end of the turn.
+ */
+function tableNow(view: GameView, entries: Entry[], cursor: Cursor, turnStart: number, known: Map<string, number>): { combatants: Combatant[]; round: number } {
+  const combatants = view.combat?.combatants ?? view.party.map((m) => m.character);
+  const round = view.combat?.round ?? 0;
+  if (atEnd(entries, cursor) && entries.length <= turnStart) return { combatants, round };
+  // Changes already shown this turn, last one winning...
+  const shown = new Map<string, number>();
+  for (let i = turnStart; i <= cursor.i && i < entries.length; i++) {
+    const e = entries[i]!;
+    if (e.kind !== 'combatLog') continue;
+    for (const line of e.lines.slice(0, i === cursor.i ? cursor.line : undefined)) {
+      const m = /^(.+?) (?:takes \d+ .*|regains \d+ HP); HP (-?\d+)$/.exec(line);
+      if (m) shown.set(m[1]!, Math.max(0, Number(m[2])));
+    }
+  }
+  // ...and where everyone stood before the first change still to come.
+  const pending = pendingState(entries, cursor, new Map(combatants.map((c) => [c.name, c.maxHp])), known);
+  return {
+    combatants: combatants.map((c) => {
+      const hp = pending.hp.get(c.name) ?? shown.get(c.name);
+      return hp === undefined || hp === c.hp ? c : { ...c, hp, status: hp > 0 ? 'ok' : c.status };
+    }),
+    round: pending.round ?? round,
+  };
+}
+
+function Transcript({ entries, cursor, animateFrom, streamed, thoughts }: { entries: Entry[]; cursor: Cursor; animateFrom: number; streamed: Set<string>; thoughts: boolean }) {
+  const visible = entries.slice(0, cursor.i);
+  const partial = entries[cursor.i];
+  if (partial?.kind === 'combatLog' && cursor.line > 0) visible.push({ kind: 'combatLog', lines: partial.lines.slice(0, cursor.line) });
+  const lastDm = visible.findLastIndex((e) => e.kind === 'dm');
   return (
     <div className="transcript">
-      {entries.map((e, i) => (
-        <EntryView key={i} e={e} showPrompt={i === lastDm} delays={delays.get(i)} thoughts={thoughts} />
+      {visible.map((e, i) => (
+        <EntryView key={i} e={e} showPrompt={i === lastDm} animate={i >= animateFrom && !(e.kind === 'dm' && streamed.has(e.text))} thoughts={thoughts} />
       ))}
-      <div ref={end} />
     </div>
   );
 }
 
-function EntryView({ e, showPrompt, delays, thoughts }: { e: Entry; showPrompt: boolean; delays?: number[]; thoughts: boolean }) {
-  if (e.kind === 'combatLog') return <CombatLog lines={e.lines} delays={delays} />;
-  if (!delays) return <EntryBody e={e} showPrompt={showPrompt} thoughts={thoughts} />;
+/** How each kind of line arrives on the page. */
+function entrance(e: Entry) {
+  switch (e.kind) {
+    case 'companion':
+      return { opacity: 0, x: -14 };
+    case 'player':
+      return { opacity: 0, x: 14 };
+    case 'check':
+    case 'approval':
+      return { opacity: 0, scale: 0.94 };
+    case 'combatStart':
+    case 'combatEnd':
+    case 'chapter':
+    case 'campStart':
+      return { opacity: 0, scale: 1.15, letterSpacing: '0.3em' };
+    case 'journal':
+      return e.lines.some((l) => l.startsWith('Level up')) ? { opacity: 0, scale: 0.8 } : { opacity: 0, y: 6 };
+    case 'departure':
+      return { opacity: 0, filter: 'blur(4px)' };
+    default:
+      return { opacity: 0, y: 6 };
+  }
+}
+
+function EntryView({ e, showPrompt, animate, thoughts }: { e: Entry; showPrompt: boolean; animate: boolean; thoughts: boolean }) {
+  if (e.kind === 'combatLog') return <CombatLog lines={e.lines} animate={animate} />;
   return (
-    <div className="reveal" style={{ animationDelay: `${delays[0]}s` }}>
+    <motion.div
+      initial={animate ? entrance(e) : false}
+      animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)', letterSpacing: e.kind === 'combatStart' || e.kind === 'combatEnd' || e.kind === 'chapter' || e.kind === 'campStart' ? '0.04em' : undefined }}
+      transition={{ duration: 0.45, ease: 'easeOut' }}
+      className={e.kind === 'journal' && e.lines.some((l) => l.startsWith('Level up')) ? 'level-burst' : undefined}
+    >
       <EntryBody e={e} showPrompt={showPrompt} thoughts={thoughts} />
-    </div>
+    </motion.div>
   );
 }
 
@@ -392,7 +545,7 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
     case 'dm':
       return (
         <div className="entry dm">
-          <p>{e.text}</p>
+          <Illuminated text={e.text} />
           {showPrompt && <p className="prompt">{e.prompt}</p>}
         </div>
       );
@@ -435,7 +588,7 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
     case 'combatStart':
       return <div className="entry banner">⚔ Combat begins</div>;
     case 'combatLog':
-      return <CombatLog lines={e.lines} />;
+      return <CombatLog lines={e.lines} animate={false} />;
     case 'combatEnd':
       return <div className="entry banner">{e.result === 'victory' ? 'Victory' : e.result === 'enemiesFled' ? 'The enemies break and flee' : 'Defeat'}</div>;
     case 'sceneEnd':
@@ -451,17 +604,29 @@ function EntryBody({ e, showPrompt, thoughts }: { e: Entry; showPrompt: boolean;
   }
 }
 
-function CombatLog({ lines, delays }: { lines: string[]; delays?: number[] }) {
+function CombatLog({ lines, animate }: { lines: string[]; animate: boolean }) {
   if (!lines.length) return null;
   return (
     <ol className="entry combat-log">
       {lines.map((l, i) => (
-        <li key={i} className={(delays?.[i] ?? -1) >= 0 ? 'reveal' : undefined} style={(delays?.[i] ?? -1) >= 0 ? { animationDelay: `${delays![i]}s` } : undefined}>
+        <motion.li key={i} initial={animate ? { opacity: 0, x: -6 } : false} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={lineClass(l)}>
           {l}
-        </li>
+        </motion.li>
       ))}
     </ol>
   );
+}
+
+/** Colour for a fight's line: hits, misses, healing, the fallen. */
+function lineClass(line: string): string | undefined {
+  if (/CRITICAL HIT$/.test(line)) return 'crit';
+  if (/, hit$/.test(line)) return 'hit';
+  if (/, miss$/.test(line)) return 'miss';
+  if (/ regains \d+ HP/.test(line)) return 'heal';
+  if (/ takes \d+ /.test(line)) return 'damage';
+  if (/^Round \d+$/.test(line)) return 'round';
+  if (/ is (dead|unconscious|stable)| is now /.test(line)) return 'status';
+  return undefined;
 }
 
 function ActBox({ busy, hasParty, onSend, onHandOff }: { busy: boolean; hasParty: boolean; onSend: (text: string) => Promise<boolean>; onHandOff: () => void }) {

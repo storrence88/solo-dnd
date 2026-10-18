@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
 import { describeEvent, SCENARIOS, takeTurn, type Combatant, type Encounter } from '../engine';
 
 /** Phase 1 sandbox: watch the rules engine run a fight turn by turn, with no AI involved. */
@@ -115,11 +116,25 @@ function startFight(scenarioId: string, seed: number): Encounter {
   return enc;
 }
 
-export function Card({ c, active }: { c: Combatant; active: boolean }) {
+export function Card({ c, active, animated = false }: { c: Combatant; active: boolean; animated?: boolean }) {
   const pct = Math.round((c.hp / c.maxHp) * 100);
   const slots = c.spellcasting?.slots.slice(1).map((n, i) => `L${i + 1}: ${n}/${c.spellcasting!.maxSlots[i + 1]}`);
+  // Each change in hit points floats off the card: red for damage, green for healing.
+  const last = useRef(c.hp);
+  const [changes, setChanges] = useState<{ id: number; amount: number }[]>([]);
+  const shake = useAnimationControls();
+  useEffect(() => {
+    const amount = c.hp - last.current;
+    last.current = c.hp;
+    if (!amount || !animated) return;
+    const id = Date.now() + Math.random();
+    setChanges((cs) => [...cs, { id, amount }]);
+    if (amount < 0) void shake.start({ x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.4 } });
+    const timer = setTimeout(() => setChanges((cs) => cs.filter((x) => x.id !== id)), 1400);
+    return () => clearTimeout(timer);
+  }, [c.hp, animated, shake]);
   return (
-    <div className={`card ${c.status} ${active ? 'active' : ''}`}>
+    <motion.div animate={shake} className={`card ${c.status} ${active ? 'active' : ''}`}>
       <div className="row">
         <strong>{c.name}</strong>
         <span className="meta">
@@ -128,10 +143,24 @@ export function Card({ c, active }: { c: Combatant; active: boolean }) {
         </span>
       </div>
       <div className="hp">
-        <div className="bar" style={{ width: `${pct}%` }} />
+        <motion.div className="bar" initial={false} animate={{ width: `${pct}%` }} transition={{ duration: animated ? 0.6 : 0, ease: 'easeOut' }} />
         <span>
           {c.hp} / {c.maxHp} HP
         </span>
+        <AnimatePresence>
+          {changes.map((x) => (
+            <motion.b
+              key={x.id}
+              className={`hp-change ${x.amount < 0 ? 'down' : 'up'}`}
+              initial={{ opacity: 0, y: 4, scale: 0.8 }}
+              animate={{ opacity: 1, y: -22, scale: 1.15 }}
+              exit={{ opacity: 0, y: -34 }}
+              transition={{ duration: 0.7, ease: 'easeOut' }}
+            >
+              {x.amount > 0 ? `+${x.amount}` : x.amount}
+            </motion.b>
+          ))}
+        </AnimatePresence>
       </div>
       <div className="meta">
         {c.status !== 'ok' && <span className="tag">{c.status}</span>}
@@ -147,6 +176,6 @@ export function Card({ c, active }: { c: Combatant; active: boolean }) {
         )}
         {slots && <span>Slots {slots.join(', ')}</span>}
       </div>
-    </div>
+    </motion.div>
   );
 }
